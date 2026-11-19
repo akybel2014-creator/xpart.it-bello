@@ -3,11 +3,12 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CartDrawer, type CartItem } from "@/src/components/CartDrawer";
 import { CategorySidebar, type FilterState } from "@/src/components/CategorySidebar";
-import { Header } from "@/src/components/Header";
+import { Header, type PortalView } from "@/src/components/Header";
 import { ProductCard } from "@/src/components/ProductCard";
 import { ProductDetailModal } from "@/src/components/ProductDetailModal";
 import { QuoteModal, SellPartModal } from "@/src/components/QuoteAndSellModals";
 import { SearchBar } from "@/src/components/SearchBar";
+import { SellerDashboard } from "@/src/components/SellerDashboard";
 import { Button } from "@/src/components/ui/button";
 import {
   Select,
@@ -35,6 +36,8 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 export default function App() {
+  const [activeView, setActiveView] = useState<PortalView>("seller-dashboard");
+
   // Quick SearchBar state
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
@@ -191,6 +194,8 @@ export default function App() {
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-screen flex-col bg-[#F9FAFB] text-slate-900">
         <Header
+          activeView={activeView}
+          onChangeView={setActiveView}
           cartCount={totalCartUnits}
           onOpenCart={() => setCartOpen(true)}
           onOpenSellModal={() => setSellModalOpen(true)}
@@ -201,8 +206,40 @@ export default function App() {
           }}
         />
 
+        {/* Mobile quick view switcher (hidden on md+ where Header nav is visible) */}
+        <div className="border-b border-slate-200 bg-white px-4 py-2 md:hidden">
+          <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-[#F9FAFB] p-1 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setActiveView("marketplace")}
+              className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                activeView === "marketplace"
+                  ? "bg-white text-[#1E3A8A] shadow-xs"
+                  : "text-slate-600"
+              }`}
+            >
+              Catalogo Ricambi
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("seller-dashboard")}
+              className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                activeView === "seller-dashboard"
+                  ? "bg-white text-[#16A34A] shadow-xs"
+                  : "text-slate-600"
+              }`}
+            >
+              Pannello Fornitore
+            </button>
+          </div>
+        </div>
+
         <main className="flex-1">
-          <SearchBar
+          {activeView === "seller-dashboard" ? (
+            <SellerDashboard />
+          ) : (
+            <>
+              <SearchBar
             query={searchQuery}
             selectedBrand={selectedBrand}
             selectedModel={selectedModel}
@@ -331,6 +368,8 @@ export default function App() {
               </div>
             </div>
           </section>
+            </>
+          )}
         </main>
 
         {/* Quiet Corporate B2B Footer */}
@@ -346,7 +385,10 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-4">
               <button
                 type="button"
-                onClick={() => scrollToSection("ricerca-avanzata")}
+                onClick={() => {
+                  setActiveView("marketplace");
+                  setTimeout(() => scrollToSection("ricerca-avanzata"), 50);
+                }}
                 className="hover:text-[#1E3A8A] transition-colors cursor-pointer"
               >
                 Ricerca OEM
@@ -354,10 +396,10 @@ export default function App() {
               <Separator orientation="vertical" className="h-3" />
               <button
                 type="button"
-                onClick={() => setSellModalOpen(true)}
-                className="hover:text-[#1E3A8A] transition-colors cursor-pointer"
+                onClick={() => setActiveView("seller-dashboard")}
+                className="hover:text-[#16A34A] transition-colors cursor-pointer"
               >
-                Diventa Fornitore
+                Pannello Fornitore
               </button>
               <Separator orientation="vertical" className="h-3" />
               <span>© 2026 CasaLavoroPRO</span>

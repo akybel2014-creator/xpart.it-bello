@@ -21,7 +21,11 @@ import {
   DropdownMenuTrigger,
 } from "@/src/components/ui/dropdown-menu";
 
+export type PortalView = "marketplace" | "seller-dashboard";
+
 interface HeaderProps {
+  activeView: PortalView;
+  onChangeView: (view: PortalView) => void;
   cartCount: number;
   onOpenCart: () => void;
   onOpenSellModal: () => void;
@@ -55,6 +59,8 @@ const INITIAL_NOTIFICATIONS: NotificationItem[] = [
 ];
 
 export function Header({
+  activeView,
+  onChangeView,
   cartCount,
   onOpenCart,
   onOpenSellModal,
@@ -69,6 +75,11 @@ export function Header({
     toast.success("Tutte le notifiche sono state segnate come lette.");
   };
 
+  const navigateMarketplaceSection = (sectionId: string) => {
+    onChangeView("marketplace");
+    setTimeout(() => onNavigateSection(sectionId), 50);
+  };
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-8 px-4 sm:px-6 lg:px-8">
@@ -77,7 +88,7 @@ export function Header({
           href="#ricerca-avanzata"
           onClick={(e) => {
             e.preventDefault();
-            onNavigateSection("ricerca-avanzata");
+            navigateMarketplaceSection("ricerca-avanzata");
           }}
           className="flex items-center gap-2.5 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]/40 rounded-md"
         >
@@ -96,34 +107,42 @@ export function Header({
         >
           <button
             type="button"
-            onClick={() => onNavigateSection("ricerca-avanzata")}
-            className="whitespace-nowrap shrink-0 py-1 border-b-2 border-transparent hover:border-[#1E3A8A] hover:text-[#1E3A8A] transition-all duration-200 ease-in-out cursor-pointer"
+            onClick={() => navigateMarketplaceSection("ricerca-avanzata")}
+            className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-all duration-200 ease-in-out cursor-pointer ${
+              activeView === "marketplace"
+                ? "border-[#1E3A8A] text-[#1E3A8A] font-semibold"
+                : "border-transparent hover:border-[#1E3A8A] hover:text-[#1E3A8A]"
+            }`}
           >
             Ricerca
           </button>
           <button
             type="button"
-            onClick={() => onNavigateSection("catalogo-ricambi")}
+            onClick={() => navigateMarketplaceSection("catalogo-ricambi")}
             className="whitespace-nowrap shrink-0 py-1 border-b-2 border-transparent hover:border-[#1E3A8A] hover:text-[#1E3A8A] transition-all duration-200 ease-in-out cursor-pointer"
           >
             Categorie
           </button>
           <button
             type="button"
-            onClick={onOpenSellModal}
-            className="whitespace-nowrap shrink-0 py-1 border-b-2 border-transparent hover:border-[#1E3A8A] hover:text-[#1E3A8A] transition-all duration-200 ease-in-out cursor-pointer"
-          >
-            Vendi
-          </button>
-          <button
-            type="button"
             onClick={() => {
               onFilterVerifiedOnly();
-              onNavigateSection("catalogo-ricambi");
+              navigateMarketplaceSection("catalogo-ricambi");
             }}
             className="whitespace-nowrap shrink-0 py-1 border-b-2 border-transparent hover:border-[#1E3A8A] hover:text-[#1E3A8A] transition-all duration-200 ease-in-out cursor-pointer"
           >
             Demolitori Verificati
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeView("seller-dashboard")}
+            className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-all duration-200 ease-in-out cursor-pointer ${
+              activeView === "seller-dashboard"
+                ? "border-[#16A34A] text-[#16A34A] font-semibold"
+                : "border-transparent hover:border-[#16A34A] hover:text-[#16A34A]"
+            }`}
+          >
+            Pannello Fornitore
           </button>
         </nav>
 
@@ -227,13 +246,13 @@ export function Header({
                 <Building2 className="h-4 w-4 text-slate-500" />
                 Dati Aziendali & Fatturazione
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onOpenCart}>
-                <Package className="h-4 w-4 text-slate-500" />
-                Ordini in Corso
+              <DropdownMenuItem onClick={() => onChangeView("seller-dashboard")}>
+                <FileText className="h-4 w-4 text-slate-500" />
+                Pannello Fornitore
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onOpenSellModal}>
-                <FileText className="h-4 w-4 text-slate-500" />
-                Pubblica Ricambio
+                <Package className="h-4 w-4 text-slate-500" />
+                Pubblica Ricambio Rapido
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
