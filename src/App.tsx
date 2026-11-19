@@ -1,91 +1,137 @@
-import { RotateCcw, SlidersHorizontal } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { toast } from "sonner";
 import { CartDrawer, type CartItem } from "@/src/components/CartDrawer";
 import type { CategoriaSito } from "@/src/components/CategorySelector";
-import { CategorySidebar, type FilterState } from "@/src/components/CategorySidebar";
+import { CheckoutSummary } from "@/src/components/CheckoutSummary";
+import { Footer } from "@/src/components/Footer";
 import { Header, type PortalView } from "@/src/components/Header";
-import { ProductCard } from "@/src/components/ProductCard";
+import { OemCatalogResults } from "@/src/components/OemCatalogResults";
 import { ProductDetailModal } from "@/src/components/ProductDetailModal";
 import { QuoteModal, SellPartModal } from "@/src/components/QuoteAndSellModals";
-import { SearchBar } from "@/src/components/SearchBar";
+import { SearchBar, type SearchModuleTab } from "@/src/components/SearchBar";
 import { SellerDashboard } from "@/src/components/SellerDashboard";
-import { Button } from "@/src/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/src/components/ui/select";
-import { Separator } from "@/src/components/ui/separator";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/src/components/ui/sheet";
+  countActiveSidebarFilters,
+  DEFAULT_SIDEBAR_FILTERS,
+  type SidebarFilterState,
+} from "@/src/components/SidebarFilters";
+import type { TyreSearchPayload } from "@/src/components/TyreSelector";
+import type {
+  VehicleSearchSelection,
+  VehicleType,
+} from "@/src/components/VehicleSearchBox";
+import { Button } from "@/src/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/src/components/ui/dialog";
 import { Toaster } from "@/src/components/ui/sonner";
 import { TooltipProvider } from "@/src/components/ui/tooltip";
 import { AUTO_PARTS, type AutoPart } from "@/src/data/parts";
+import { useOemCatalogSearch } from "@/src/hooks/useOemCatalogSearch";
+import { CatalogPage } from "@/src/pages/CatalogPage";
+import { ChiSiamo } from "@/src/pages/ChiSiamo";
+import { Contatti } from "@/src/pages/Contatti";
+import { GaranziaResi } from "@/src/pages/GaranziaResi";
+import { HomePage } from "@/src/pages/HomePage";
+import {
+  CookiePolicy,
+  DirectoryDemolitori,
+  DiventaFornitore,
+  MarcheSupportate,
+  OfficineB2B,
+} from "@/src/pages/PagineInformativeExtra";
+import { PrivacyPolicy } from "@/src/pages/PrivacyPolicy";
+import { TerminiDiServizio } from "@/src/pages/TerminiDiServizio";
+import { normalizeOemCode } from "@/src/services/oemCatalogService";
 
 type SortOption = "relevance" | "price-asc" | "price-desc" | "year-desc";
 
-const DEFAULT_FILTERS: FilterState = {
-  categoryId: null,
-  subcategoryId: null,
-  yearFrom: 2012,
-  yearTo: 2025,
-  conditions: [],
-  priceRange: [50, 2000],
-  verifiedOnly: false,
-};
+function AppShell() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeView: PortalView =
+    location.pathname === "/pannello-fornitore" ? "seller-dashboard" : "marketplace";
 
-export default function App() {
-  const [activeView, setActiveView] = useState<PortalView>("seller-dashboard");
+  const handleChangeView = (view: PortalView) => {
+    if (view === "seller-dashboard") {
+      navigate("/pannello-fornitore");
+    } else if (
+      location.pathname !== "/" &&
+      location.pathname !== "/ricerca" &&
+      location.pathname !== "/catalogo" &&
+      location.pathname !== "/categorie"
+    ) {
+      navigate("/");
+    }
+  };
 
-  // Quick SearchBar state
+  // Quick SearchBar / VehicleSearchBox / TyreSelector state
+  const [activeSearchTab, setActiveSearchTab] = useState<SearchModuleTab>("ricambi");
+  const [activeTyreSearch, setActiveTyreSearch] = useState<TyreSearchPayload | null>(null);
+  const [vehicleType, setVehicleType] = useState<VehicleType>("auto");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
   const [selectedModel, setSelectedModel] = useState("all");
   const [selectedEngine, setSelectedEngine] = useState("all");
+  const [selectedVeicoloId, setSelectedVeicoloId] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<CategoriaSito | null>(null);
 
-  // Sidebar & Sort state
-  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  // Ricerca live su Supabase `public.codici_oem_catalogo` collegata al campo OEM + Marca
+  const oemCatalogSearch = useOemCatalogSearch({
+    query: searchQuery,
+    selectedBrand,
+  });
+
+  // Sidebar & Sort state (SidebarFilters collegata a `public.parts`)
+  const [filters, setFilters] = useState<SidebarFilterState>(DEFAULT_SIDEBAR_FILTERS);
   const [sortBy, setSortBy] = useState<SortOption>("relevance");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [searchResetKey, setSearchResetKey] = useState(0);
 
   // Cart & Modals state
   const [cartItems, setCartItems] = useState<CartItem[]>([
     { part: AUTO_PARTS[0], quantity: 1 },
   ]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutSnapshot, setCheckoutSnapshot] = useState<CartItem[]>([]);
   const [inspectedPart, setInspectedPart] = useState<AutoPart | null>(null);
   const [quotePart, setQuotePart] = useState<AutoPart | null>(null);
   const [sellModalOpen, setSellModalOpen] = useState(false);
 
-  const hasActiveQuickSearch =
-    searchQuery.trim() !== "" ||
-    selectedBrand !== "all" ||
-    selectedModel !== "all" ||
-    selectedEngine !== "all" ||
-    selectedCategory !== null;
+  const activeSidebarFilterCount = useMemo(
+    () => countActiveSidebarFilters(filters),
+    [filters]
+  );
 
-  const activeSidebarFilterCount = useMemo(() => {
-    let count = 0;
-    if (filters.categoryId) count++;
-    if (filters.subcategoryId) count++;
-    if (filters.yearFrom !== 2012 || filters.yearTo !== 2025) count++;
-    if (filters.conditions.length > 0) count += filters.conditions.length;
-    if (filters.priceRange[0] !== 50 || filters.priceRange[1] !== 2000) count++;
-    if (filters.verifiedOnly) count++;
-    return count;
-  }, [filters]);
+  const hasActiveTopSearch = Boolean(
+    searchQuery.trim() ||
+      selectedBrand !== "all" ||
+      selectedModel !== "all" ||
+      selectedEngine !== "all" ||
+      selectedCategory !== null ||
+      activeTyreSearch !== null
+  );
 
   const filteredParts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const normalizedQ = normalizeOemCode(searchQuery);
 
     const list = AUTO_PARTS.filter((part) => {
       if (q) {
         const searchable =
           `${part.title} ${part.oemCode} ${part.brand} ${part.model} ${part.engineCode}`.toLowerCase();
-        if (!searchable.includes(q)) return false;
+        const normalizedPartOem = normalizeOemCode(part.oemCode);
+        const matchesText = searchable.includes(q);
+        const matchesNormalizedOem =
+          normalizedQ.length >= 2 && normalizedPartOem.includes(normalizedQ);
+        if (!matchesText && !matchesNormalizedOem) return false;
       }
 
       if (
@@ -124,9 +170,6 @@ export default function App() {
         if (!matchesEngine) return false;
       }
 
-      if (filters.categoryId && part.category !== filters.categoryId) return false;
-      if (filters.subcategoryId && part.subcategory !== filters.subcategoryId) return false;
-
       if (selectedCategory) {
         const catText = `${selectedCategory.slug} ${selectedCategory.nome} ${selectedCategory.macro_gruppo}`.toLowerCase();
         const partText = `${part.category} ${part.subcategory} ${part.title} ${part.description}`.toLowerCase();
@@ -154,25 +197,42 @@ export default function App() {
         if (!matchesCat) return false;
       }
 
-      if (part.yearTo < filters.yearFrom || part.yearFrom > filters.yearTo) {
-        return false;
+      // 1. Filtro Condizione del pezzo (Tutti / Usato / Nuovo / Ricondizionato)
+      if (filters.condizione && filters.condizione !== "tutti") {
+        const condTarget = filters.condizione.toLowerCase();
+        if (!part.condition.toLowerCase().includes(condTarget)) {
+          return false;
+        }
       }
 
+      // 2. Filtro Fascia di Prezzo (Min € / Max €)
+      const minPrice = Number(filters.prezzoMin);
       if (
-        filters.conditions.length > 0 &&
-        !filters.conditions.includes(part.condition)
+        filters.prezzoMin !== "" &&
+        Number.isFinite(minPrice) &&
+        part.priceNet < minPrice
       ) {
         return false;
       }
 
+      const maxPrice = Number(filters.prezzoMax);
       if (
-        part.priceNet < filters.priceRange[0] ||
-        part.priceNet > filters.priceRange[1]
+        filters.prezzoMax !== "" &&
+        Number.isFinite(maxPrice) &&
+        part.priceNet > maxPrice
       ) {
         return false;
       }
 
-      if (filters.verifiedOnly && !part.seller.verified) return false;
+      // 3. Solo con foto disponibili
+      if (filters.soloConFoto && !part.image?.trim()) {
+        return false;
+      }
+
+      // 4. Spedizione rapida disponibile (evasione entro 24h)
+      if (filters.spedizioneRapida && part.seller.dispatchHours > 24) {
+        return false;
+      }
 
       return true;
     });
@@ -236,40 +296,225 @@ export default function App() {
     setCartItems((prev) => prev.filter((item) => item.part.id !== partId));
   };
 
-  const handleResetQuickSearch = () => {
-    setSearchQuery("");
+  const applyVehicleSelection = (selection: VehicleSearchSelection) => {
+    setVehicleType(selection.tipo_veicolo);
+    setSearchQuery(selection.query);
+    setSelectedBrand(selection.marca || "all");
+    setSelectedModel(selection.modello || "all");
+    setSelectedEngine(selection.motorizzazione || "all");
+    setSelectedVeicoloId(selection.veicolo_id || "");
+    setSelectedCategory(
+      selection.categoria_id
+        ? {
+            id: selection.categoria_id,
+            nome: selection.categoria_nome,
+            slug: selection.categoria_slug,
+            macro_gruppo: "Principale",
+          }
+        : null
+    );
+  };
+
+  const handleResetQuickSearch = (selection?: VehicleSearchSelection) => {
+    if (selection) {
+      applyVehicleSelection(selection);
+    } else {
+      setSearchQuery("");
+      setSelectedBrand("all");
+      setSelectedModel("all");
+      setSelectedEngine("all");
+      setSelectedVeicoloId("");
+      setSelectedCategory(null);
+    }
+    oemCatalogSearch.clearResults();
+  };
+
+  const handleSubmitQuickSearch = (selection: VehicleSearchSelection) => {
+    applyVehicleSelection(selection);
+    const normalized = normalizeOemCode(selection.query);
+    if (normalized.length >= 2) {
+      void oemCatalogSearch.searchNow(selection.query, selection.marca || "all");
+    }
+    navigate("/catalogo");
+  };
+
+  const handleSelectCategoryCard = (cat: CategoriaSito) => {
+    setSelectedCategory(cat);
+    navigate("/catalogo");
+  };
+
+  const handleSelectCrossReference = (code: string) => {
+    setSearchQuery(code);
+    void oemCatalogSearch.searchNow(code, selectedBrand);
+  };
+
+  const handleClearBrandForOem = () => {
     setSelectedBrand("all");
     setSelectedModel("all");
     setSelectedEngine("all");
-    setSelectedCategory(null);
+    void oemCatalogSearch.searchNow(searchQuery, "all");
+  };
+
+  const handleSearchTyres = (payload: TyreSearchPayload) => {
+    setActiveTyreSearch(payload);
+    const brandLabel = payload.marca !== "tutti" ? ` · ${payload.marca}` : "";
+    const seasonLabel = payload.stagione !== "tutte" ? ` · ${payload.stagione}` : "";
+    toast.success(
+      `Ricerca pneumatici avviata: ${payload.misura_formattata || payload.veicolo}${seasonLabel}${brandLabel}`
+    );
+    navigate("/catalogo");
+  };
+
+  const handleResetTyres = () => {
+    setActiveTyreSearch(null);
   };
 
   const handleResetAll = () => {
     handleResetQuickSearch();
-    setFilters(DEFAULT_FILTERS);
+    setActiveTyreSearch(null);
+    setFilters(DEFAULT_SIDEBAR_FILTERS);
     setSortBy("relevance");
+    setSearchResetKey((prev) => prev + 1);
+    toast.info("Tutti i filtri di ricerca sono stati azzerati.");
   };
 
   const scrollToSection = (sectionId: string) => {
+    if (sectionId === "catalogo-ricambi" && location.pathname === "/") {
+      navigate("/catalogo");
+      return;
+    }
     const el = document.getElementById(sectionId);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
 
+  // Gestisce scroll automatico coerente al cambio percorso React Router
+  useEffect(() => {
+    if (location.pathname === "/catalogo" || location.pathname === "/categorie") {
+      window.setTimeout(() => {
+        const el = document.getElementById("catalogo-ricambi");
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 60);
+    } else if (location.pathname === "/ricerca") {
+      setActiveSearchTab("ricambi");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [location.pathname]);
+
+  const sharedSearchHero = (
+    <SearchBar
+      activeSearchTab={activeSearchTab}
+      onChangeSearchTab={setActiveSearchTab}
+      query={searchQuery}
+      initialTipoVeicolo={vehicleType}
+      isOemSearching={oemCatalogSearch.isLoading}
+      onSelectionChange={applyVehicleSelection}
+      onSubmitSearch={handleSubmitQuickSearch}
+      onResetSearch={handleResetQuickSearch}
+      onSearchTyres={handleSearchTyres}
+      onResetTyres={handleResetTyres}
+      searchResetKey={searchResetKey}
+    />
+  );
+
+  const sharedOemResults = (
+    <OemCatalogResults
+      results={oemCatalogSearch.results}
+      totalCount={oemCatalogSearch.totalCount}
+      normalizedQuery={oemCatalogSearch.normalizedQuery}
+      selectedBrand={selectedBrand}
+      isLoading={oemCatalogSearch.isLoading}
+      hasSearched={oemCatalogSearch.hasSearched}
+      error={oemCatalogSearch.error}
+      onSelectCrossReference={handleSelectCrossReference}
+      onClearBrandFilter={handleClearBrandForOem}
+      onRetry={() => void oemCatalogSearch.searchNow()}
+      onClearQuery={() => {
+        setSearchQuery("");
+        oemCatalogSearch.clearResults();
+      }}
+    />
+  );
+
+  const activeTyreBanner = activeTyreSearch ? (
+    <section className="border-b border-slate-200/80 bg-[#F9FAFB]">
+      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span className="font-semibold text-[#1E3A8A]">
+            Filtro Pneumatici attivo:
+          </span>
+          <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono font-semibold text-slate-900">
+            {activeTyreSearch.misura_formattata || activeTyreSearch.veicolo.toUpperCase()}
+          </span>
+          <span className="rounded border border-slate-200 bg-white px-2 py-0.5 capitalize text-slate-700">
+            Veicolo: {activeTyreSearch.veicolo}
+          </span>
+          {activeTyreSearch.stagione !== "tutte" && (
+            <span className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 capitalize font-medium text-orange-800">
+              Stagione: {activeTyreSearch.stagione}
+            </span>
+          )}
+          {activeTyreSearch.marca !== "tutti" && (
+            <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-700">
+              Produttore: {activeTyreSearch.marca}
+            </span>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={handleResetTyres}
+          className="h-7 text-xs text-slate-500 hover:text-slate-900"
+        >
+          Rimuovi filtro pneumatici
+        </Button>
+      </div>
+    </section>
+  ) : null;
+
+  const catalogPageElement = (
+    <CatalogPage
+      searchSection={sharedSearchHero}
+      activeTyreBanner={activeTyreBanner}
+      oemResultsSection={sharedOemResults}
+      filters={filters}
+      onChangeFilters={setFilters}
+      activeSidebarFilterCount={activeSidebarFilterCount}
+      hasActiveTopSearch={hasActiveTopSearch}
+      mobileFiltersOpen={mobileFiltersOpen}
+      onMobileFiltersOpenChange={setMobileFiltersOpen}
+      filteredParts={filteredParts}
+      selectedVeicoloId={selectedVeicoloId}
+      vehicleType={vehicleType}
+      selectedCategoryName={selectedCategory?.nome ?? null}
+      sortBy={sortBy}
+      onChangeSortBy={(val: SortOption) => setSortBy(val)}
+      onAddToCart={handleAddToCart}
+      onRequestQuote={setQuotePart}
+      onInspectPart={setInspectedPart}
+      onResetAll={handleResetAll}
+    />
+  );
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-screen flex-col bg-[#F9FAFB] text-slate-900">
         <Header
           activeView={activeView}
-          onChangeView={setActiveView}
+          onChangeView={handleChangeView}
           cartCount={totalCartUnits}
           onOpenCart={() => setCartOpen(true)}
           onOpenSellModal={() => setSellModalOpen(true)}
           onNavigateSection={scrollToSection}
+          onOpenTyresSearch={() => setActiveSearchTab("pneumatici")}
           onFilterVerifiedOnly={() => {
-            setFilters((prev) => ({ ...prev, verifiedOnly: true }));
-            toast.success("Filtro attivo: solo autodemolitori verificati.");
+            navigate("/demolitori");
           }}
         />
 
@@ -278,7 +523,7 @@ export default function App() {
           <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-[#F9FAFB] p-1 border border-slate-200">
             <button
               type="button"
-              onClick={() => setActiveView("marketplace")}
+              onClick={() => handleChangeView("marketplace")}
               className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 activeView === "marketplace"
                   ? "bg-white text-[#1E3A8A] shadow-xs"
@@ -289,7 +534,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveView("seller-dashboard")}
+              onClick={() => handleChangeView("seller-dashboard")}
               className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 activeView === "seller-dashboard"
                   ? "bg-white text-[#16A34A] shadow-xs"
@@ -302,179 +547,47 @@ export default function App() {
         </div>
 
         <main className="flex-1">
-          {activeView === "seller-dashboard" ? (
-            <SellerDashboard />
-          ) : (
-            <>
-              <SearchBar
-            query={searchQuery}
-            selectedBrand={selectedBrand}
-            selectedModel={selectedModel}
-            selectedEngine={selectedEngine}
-            selectedCategory={selectedCategory}
-            onQueryChange={setSearchQuery}
-            onBrandChange={setSelectedBrand}
-            onModelChange={setSelectedModel}
-            onEngineChange={setSelectedEngine}
-            onCategoryChange={setSelectedCategory}
-            onSubmitSearch={() => scrollToSection("catalogo-ricambi")}
-            onResetSearch={handleResetQuickSearch}
-            hasActiveQuickSearch={hasActiveQuickSearch}
-          />
-
-          {/* Catalog & Sidebar Filters */}
-          <section
-            id="catalogo-ricambi"
-            className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
-          >
-            <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-              {/* Desktop Sidebar */}
-              <div className="hidden lg:block lg:w-72 shrink-0">
-                <CategorySidebar
-                  filters={filters}
-                  onChangeFilters={setFilters}
-                  onResetAll={() => setFilters(DEFAULT_FILTERS)}
-                  activeFilterCount={activeSidebarFilterCount}
+          <Routes>
+            {/* Homepage a tutta larghezza senza sidebar laterale filtri */}
+            <Route
+              path="/"
+              element={
+                <HomePage
+                  heroSection={sharedSearchHero}
+                  oemResultsSection={sharedOemResults}
+                  onSelectCategoryCard={handleSelectCategoryCard}
+                  onOpenSellModal={() => setSellModalOpen(true)}
                 />
-              </div>
+              }
+            />
 
-              {/* Mobile Filter Sheet */}
-              <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-                <SheetContent side="left" className="w-80 overflow-y-auto p-4">
-                  <SheetHeader className="mb-3 px-1">
-                    <SheetTitle>Filtri Catalogo</SheetTitle>
-                  </SheetHeader>
-                  <CategorySidebar
-                    filters={filters}
-                    onChangeFilters={setFilters}
-                    onResetAll={() => setFilters(DEFAULT_FILTERS)}
-                    activeFilterCount={activeSidebarFilterCount}
-                  />
-                </SheetContent>
-              </Sheet>
+            {/* Pagina Ricerca & Catalogo dedicata con filtri laterali */}
+            <Route path="/ricerca" element={catalogPageElement} />
+            <Route path="/catalogo" element={catalogPageElement} />
+            <Route path="/categorie" element={catalogPageElement} />
+            <Route path="/demolitori" element={<DirectoryDemolitori />} />
+            <Route path="/marche" element={<MarcheSupportate />} />
 
-              {/* Main Product Grid Column */}
-              <div className="min-w-0 flex-1">
-                {/* Catalog Toolbar */}
-                <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <h2 className="font-display text-xl font-bold tracking-tight text-slate-900">
-                      Catalogo Ricambi Disponibili
-                    </h2>
-                    <p className="mt-0.5 text-sm text-slate-500 tabular-nums">
-                      {filteredParts.length}{" "}
-                      {filteredParts.length === 1
-                        ? "ricambio verificato trovato"
-                        : "ricambi verificati trovati"}
-                    </p>
-                  </div>
+            {/* Area Fornitori e Officine */}
+            <Route path="/pannello-fornitore" element={<SellerDashboard />} />
+            <Route path="/diventa-fornitore" element={<DiventaFornitore />} />
+            <Route path="/officine-b2b" element={<OfficineB2B />} />
+            <Route path="/garanzia-e-resi" element={<GaranziaResi />} />
 
-                  <div className="flex items-center gap-2.5">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setMobileFiltersOpen(true)}
-                      className="lg:hidden"
-                    >
-                      <SlidersHorizontal className="h-4 w-4" />
-                      Filtri
-                      {activeSidebarFilterCount > 0 && ` (${activeSidebarFilterCount})`}
-                    </Button>
+            {/* Supporto e Note Legali */}
+            <Route path="/chi-siamo" element={<ChiSiamo />} />
+            <Route path="/contatti" element={<Contatti />} />
+            <Route path="/termini-di-servizio" element={<TerminiDiServizio />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/cookie-policy" element={<CookiePolicy />} />
 
-                    <div className="w-48">
-                      <Select
-                        value={sortBy}
-                        onValueChange={(val) => setSortBy(val as SortOption)}
-                      >
-                        <SelectTrigger aria-label="Ordina ricambi" className="h-9 bg-white text-xs">
-                          <SelectValue placeholder="Ordina per" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="relevance">Rilevanza</SelectItem>
-                          <SelectItem value="price-asc">Prezzo: crescente</SelectItem>
-                          <SelectItem value="price-desc">Prezzo: decrescente</SelectItem>
-                          <SelectItem value="year-desc">Anno più recente</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Product Grid */}
-                {filteredParts.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                    {filteredParts.map((part) => (
-                      <ProductCard
-                        key={part.id}
-                        part={part}
-                        onAddToCart={handleAddToCart}
-                        onRequestQuote={setQuotePart}
-                        onInspectPart={setInspectedPart}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 py-16 text-center">
-                    <h3 className="font-display text-lg font-semibold text-slate-900">
-                      Nessun ricambio corrisponde ai filtri selezionati
-                    </h3>
-                    <p className="mt-1.5 max-w-md text-sm text-slate-500">
-                      Prova ad ampliare la fascia di prezzo, modificare l&apos;anno di compatibilità
-                      oppure rimuovere la ricerca per codice OEM.
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleResetAll}
-                      className="mt-5"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Ripristina tutti i filtri
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-            </>
-          )}
+            {/* Fallback sicuro: evita schermate bianche o 404 */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </main>
 
-        {/* Quiet Corporate B2B Footer */}
-        <footer className="border-t border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-[1440px] flex-col items-start justify-between gap-4 px-4 py-8 text-xs text-slate-500 sm:flex-row sm:items-center sm:px-6 lg:px-8">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="font-display font-semibold text-slate-800">
-                CasaLavoroPRO — Sezione Automotive
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>Marketplace B2B Autoricambi Usati & Ricondizionati</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-4">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveView("marketplace");
-                  setTimeout(() => scrollToSection("ricerca-avanzata"), 50);
-                }}
-                className="hover:text-[#1E3A8A] transition-colors cursor-pointer"
-              >
-                Ricerca OEM
-              </button>
-              <Separator orientation="vertical" className="h-3" />
-              <button
-                type="button"
-                onClick={() => setActiveView("seller-dashboard")}
-                className="hover:text-[#16A34A] transition-colors cursor-pointer"
-              >
-                Pannello Fornitore
-              </button>
-              <Separator orientation="vertical" className="h-3" />
-              <span>© 2026 CasaLavoroPRO</span>
-            </div>
-          </div>
-        </footer>
+        {/* Footer B2B Professionale a 4 Colonne + Barra Copyright */}
+        <Footer />
 
         {/* Interactive Drawers & Modals */}
         <CartDrawer
@@ -484,7 +597,33 @@ export default function App() {
           onUpdateQty={handleUpdateCartQty}
           onRemoveItem={handleRemoveCartItem}
           onClearCart={() => setCartItems([])}
+          onProceedToCheckout={() => {
+            setCheckoutSnapshot(cartItems);
+            setCartOpen(false);
+            setCheckoutOpen(true);
+          }}
         />
+
+        <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+          <DialogContent className="max-w-4xl border-0 bg-transparent p-0 shadow-none">
+            <DialogTitle className="sr-only">
+              Riepilogo Ordine e Pagamento B2B
+            </DialogTitle>
+            <CheckoutSummary
+              items={checkoutSnapshot}
+              onPaymentSuccess={(res) => {
+                setCartItems([]);
+                toast.success(
+                  `Ordine ${res?.codiceOrdine ?? ""} confermato con successo.`
+                );
+              }}
+              onBackToCart={() => {
+                setCheckoutOpen(false);
+                if (cartItems.length > 0) setCartOpen(true);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
 
         <ProductDetailModal
           part={inspectedPart}
@@ -498,5 +637,13 @@ export default function App() {
         <Toaster />
       </div>
     </TooltipProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
+    </BrowserRouter>
   );
 }

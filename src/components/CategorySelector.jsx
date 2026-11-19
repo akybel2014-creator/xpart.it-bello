@@ -1,6 +1,12 @@
 import { AlertCircle, ChevronDown, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { supabase as defaultSupabase } from "@/src/lib/supabaseClient";
+
+/**
+ * Cache leggera in memoria per evitare chiamate duplicate a `public.categorie_sito`
+ * quando `CategorySelector` è montato sia nella barra di ricerca sia nel form venditore.
+ */
+let categorieCache = null;
 
 /**
  * Normalizza una stringa di categoria (rimuove punteggiatura/virgole e spazi extra)
@@ -80,16 +86,25 @@ export function CategorySelector({
   className = "",
   supabaseClient = defaultSupabase,
 }) {
+  const uniqueId = useId();
+  const macroSelectId = `${uniqueId}-macro`;
+  const subSelectId = `${uniqueId}-sub`;
+
   // Stato delle categorie scaricate da Supabase
-  const [macroCategorie, setMacroCategorie] = useState([]);
-  const [tutteSottocategorie, setTutteSottocategorie] = useState([]);
+  const [macroCategorie, setMacroCategorie] = useState(
+    () => categorieCache?.macro ?? []
+  );
+  const [tutteSottocategorie, setTutteSottocategorie] = useState(
+    () => categorieCache?.sub ?? []
+  );
 
   // Stato selezioni correnti
   const [selectedMacroNome, setSelectedMacroNome] = useState("");
   const [selectedSubId, setSelectedSubId] = useState("");
+  const skipNextNullSyncRef = useRef(false);
 
   // Stati UX: caricamento ed errore
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !categorieCache);
   const [errorMessage, setErrorMessage] = useState(null);
 
   /**
@@ -98,59 +113,82 @@ export function CategorySelector({
    *    - Scarica in parallelo anche le sottocategorie attive (livello = 2) per rendere
    *      istantaneo il filtro a cascata lato client senza latenza al cambio selezione.
    */
-  const caricaCategorie = useCallback(async () => {
-    if (!supabaseClient) {
-      setErrorMessage("Connessione Supabase non configurata.");
-      setLoading(false);
-      return;
-    }
+  const caricaCategorie = useCallback(
+    async (forceRefresh = false) => {
+      if (!forceRefresh && categorieCache && supabaseClient === defaultSupabase) {
+        setMacroCategorie(categorieCache.macro);
+        setTutteSottocategorie(categorieCache.sub);
+        setLoading(false);
+        return;
+      }
 
-    setLoading(true);
-    setErrorMessage(null);
+      if (!supabaseClient) {
+        setErrorMessage("Connessione Supabase non configurata.");
+        setLoading(false);
+        return;
+      }
 
-    try {
-      const [macroRes, subRes] = await Promise.all([
-        supabaseClient
-          .from("categorie_sito")
-          .select("id, nome, slug, macro_gruppo, livello, attiva")
-          .eq("livello", 1)
-          .eq("attiva", true)
-          .order("nome", { ascending: true }),
-        supabaseClient
-          .from("categorie_sito")
-          .select("id, nome, slug, macro_gruppo, livello, attiva")
-          .eq("livello", 2)
-          .eq("attiva", true)
-          .order("nome", { ascending: true }),
-      ]);
+      setLoading(true);
+      setErrorMessage(null);
 
-      if (macroRes.error) throw macroRes.error;
-      if (subRes.error) throw subRes.error;
+      try {
+        const [macroRes, subRes] = await Promise.all([
+          supabaseClient
+            .from("categorie_sito")
+            .select("id, nome, slug, macro_gruppo, livello, attiva")
+            .eq("livello", 1)
+            .eq("attiva", true)
+            .order("nome", { ascending: true }),
+          supabaseClient
+            .from("categorie_sito")
+            .select("id, nome, slug, macro_gruppo, livello, attiva")
+            .eq("livello", 2)
+            .eq("attiva", true)
+            .order("nome", { ascending: true }),
+        ]);
 
-      setMacroCategorie(macroRes.data ?? []);
-      setTutteSottocategorie(subRes.data ?? []);
-    } catch (err) {
-      const messaggio =
-        err instanceof Error
-          ? err.message
-          : "Errore di connessione durante il caricamento delle categorie.";
-      setErrorMessage(messaggio);
-    } finally {
-      setLoading(false);
-    }
-  }, [supabaseClient]);
+        if (macroRes.error) throw macroRes.error;
+        if (subRes.error) throw subRes.error;
+
+        const macroData = macroRes.data ?? [];
+        const subData = subRes.data ?? [];
+
+        if (supabaseClient === defaultSupabase) {
+          categorieCache = { macro: macroData, sub: subData };
+        }
+
+        setMacroCategorie(macroData);
+        setTutteSottocategorie(subData);
+      } catch (err) {
+        const messaggio =
+          err instanceof Error
+            ? err.message
+            : "Errore di connessione durante il caricamento delle categorie.";
+        setErrorMessage(messaggio);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [supabaseClient]
+  );
 
   useEffect(() => {
-    caricaCategorie();
+    caricaCategorie(false);
   }, [caricaCategorie]);
 
   // Sincronizza eventuale valore controllato esterno (es. Reset o Modifica ricambio)
   useEffect(() => {
     if (!value) {
+      if (skipNextNullSyncRef.current) {
+        skipNextNullSyncRef.current = false;
+        return;
+      }
       setSelectedMacroNome("");
       setSelectedSubId("");
       return;
     }
+
+    skipNextNullSyncRef.current = false;
 
     if (value.macro_gruppo && value.macro_gruppo !== "Principale") {
       // Cerca la macro-categoria padre corrispondente anche in presenza di punteggiatura diversa
@@ -162,9 +200,10 @@ export function CategorySelector({
       setSelectedSubId(value.id || "");
     } else if (value.nome) {
       setSelectedMacroNome(value.nome);
-      setSelectedSubId(value.id || "");
+      // In modalità filtro, la scelta della sola macro mantiene la sottocategoria su "Tutte"
+      setSelectedSubId(variant === "filter" ? "" : value.id || "");
     }
-  }, [value, macroCategorie]);
+  }, [value, macroCategorie, variant]);
 
   // Macro-categoria attualmente selezionata
   const macroSelezionata = useMemo(
@@ -194,9 +233,8 @@ export function CategorySelector({
       return;
     }
 
-    // In modalità filtro barra di ricerca, se non ci sono sottocategorie o per filtrare subito,
-    // notifica comunque la macro-categoria scelta se desiderato; nel form attende la sottocategoria
-    // (o la selezione esplicita della voce principale se priva di figli).
+    // In modalità filtro barra di ricerca notifica subito la macro-categoria selezionata;
+    // nel form di inserimento ricambio attende la selezione della sottocategoria.
     if (variant === "filter") {
       const macroObj = macroCategorie.find((m) => m.nome === nextMacroNome);
       if (macroObj) {
@@ -208,6 +246,7 @@ export function CategorySelector({
         });
       }
     } else {
+      skipNextNullSyncRef.current = true;
       onCategorySelect?.(null);
     }
   };
@@ -226,6 +265,7 @@ export function CategorySelector({
           macro_gruppo: macroSelezionata.macro_gruppo,
         });
       } else {
+        skipNextNullSyncRef.current = true;
         onCategorySelect?.(null);
       }
       return;
@@ -286,7 +326,7 @@ export function CategorySelector({
         </span>
         <button
           type="button"
-          onClick={caricaCategorie}
+          onClick={() => caricaCategorie(true)}
           className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-2.5 py-1 font-semibold text-red-700 transition-colors hover:bg-red-50 cursor-pointer"
         >
           <RefreshCw className="h-3 w-3" />
@@ -297,7 +337,7 @@ export function CategorySelector({
   }
 
   const isFilter = variant === "filter";
-  const selectHeight = isFilter ? "h-11" : "h-10";
+  const selectHeight = "h-10";
 
   return (
     <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${className}`}>
@@ -305,7 +345,7 @@ export function CategorySelector({
       <div>
         {!isFilter && (
           <label
-            htmlFor="cat-macro-select"
+            htmlFor={macroSelectId}
             className="mb-1.5 block text-xs font-semibold text-slate-700"
           >
             Macro-categoria *
@@ -313,7 +353,7 @@ export function CategorySelector({
         )}
         <div className="relative">
           <select
-            id="cat-macro-select"
+            id={macroSelectId}
             aria-label="Macro-categoria"
             value={selectedMacroNome}
             onChange={handleMacroChange}
@@ -336,7 +376,7 @@ export function CategorySelector({
       <div>
         {!isFilter && (
           <label
-            htmlFor="cat-sub-select"
+            htmlFor={subSelectId}
             className="mb-1.5 block text-xs font-semibold text-slate-700"
           >
             Sottocategoria *
@@ -344,7 +384,7 @@ export function CategorySelector({
         )}
         <div className="relative">
           <select
-            id="cat-sub-select"
+            id={subSelectId}
             aria-label="Sottocategoria"
             value={selectedSubId}
             disabled={!selectedMacroNome}

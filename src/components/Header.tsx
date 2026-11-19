@@ -31,6 +31,7 @@ interface HeaderProps {
   onOpenSellModal: () => void;
   onNavigateSection: (sectionId: string) => void;
   onFilterVerifiedOnly: () => void;
+  onOpenTyresSearch?: () => void;
 }
 
 interface NotificationItem {
@@ -66,6 +67,7 @@ export function Header({
   onOpenSellModal,
   onNavigateSection,
   onFilterVerifiedOnly,
+  onOpenTyresSearch,
 }: HeaderProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
   const unreadCount = notifications.filter((n) => n.unread).length;
@@ -116,6 +118,18 @@ export function Header({
           >
             Ricerca
           </button>
+          {onOpenTyresSearch && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenTyresSearch();
+                navigateMarketplaceSection("ricerca-avanzata");
+              }}
+              className="whitespace-nowrap shrink-0 py-1 border-b-2 border-transparent hover:border-orange-500 hover:text-[#1E3A8A] transition-all duration-200 ease-in-out cursor-pointer"
+            >
+              Pneumatici
+            </button>
+          )}
           <button
             type="button"
             onClick={() => navigateMarketplaceSection("catalogo-ricambi")}

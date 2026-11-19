@@ -24,6 +24,7 @@ interface CartDrawerProps {
   onUpdateQty: (partId: string, delta: number) => void;
   onRemoveItem: (partId: string) => void;
   onClearCart: () => void;
+  onProceedToCheckout?: () => void;
 }
 
 const FREE_SHIPPING_THRESHOLD = 600;
@@ -35,6 +36,7 @@ export function CartDrawer({
   onUpdateQty,
   onRemoveItem,
   onClearCart,
+  onProceedToCheckout,
 }: CartDrawerProps) {
   const [confirmedOrderCode, setConfirmedOrderCode] = useState<string | null>(null);
 
@@ -222,10 +224,16 @@ export function CartDrawer({
               <Button
                 type="button"
                 size="lg"
-                onClick={handleConfirmOrder}
+                onClick={() => {
+                  if (onProceedToCheckout) {
+                    onProceedToCheckout();
+                  } else {
+                    handleConfirmOrder();
+                  }
+                }}
                 className="mt-4 w-full"
               >
-                Conferma Ordine B2B
+                Procedi al Checkout Sicuro
               </Button>
             </div>
           </>

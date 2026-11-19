@@ -1,66 +1,44 @@
-import { Loader2, RotateCcw, Search, ShieldCheck } from "lucide-react";
-import { Button } from "@/src/components/ui/button";
-import { Input } from "@/src/components/ui/input";
+import { CircleDot, ShieldCheck, Wrench } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/src/components/ui/select";
+  TyreSelector,
+  type TyreSearchPayload,
+} from "@/src/components/TyreSelector";
 import {
-  CategorySelector,
-  type CategoriaSito,
-} from "@/src/components/CategorySelector";
+  VehicleSearchBox,
+  type VehicleSearchSelection,
+  type VehicleType,
+} from "@/src/components/VehicleSearchBox";
 import { HERO_BANNER_IMAGE } from "@/src/data/parts";
-import { useVehicleCascade } from "@/src/hooks/useVehicleCascade";
+
+export type SearchModuleTab = "ricambi" | "pneumatici";
 
 interface SearchBarProps {
+  activeSearchTab: SearchModuleTab;
+  onChangeSearchTab: (tab: SearchModuleTab) => void;
   query: string;
-  selectedBrand: string;
-  selectedModel: string;
-  selectedEngine: string;
-  selectedCategory: CategoriaSito | null;
-  onQueryChange: (value: string) => void;
-  onBrandChange: (value: string) => void;
-  onModelChange: (value: string) => void;
-  onEngineChange: (value: string) => void;
-  onCategoryChange: (cat: CategoriaSito | null) => void;
-  onSubmitSearch: () => void;
-  onResetSearch: () => void;
-  hasActiveQuickSearch: boolean;
+  initialTipoVeicolo?: VehicleType;
+  isOemSearching?: boolean;
+  onSelectionChange: (selection: VehicleSearchSelection) => void;
+  onSubmitSearch: (selection: VehicleSearchSelection) => void;
+  onResetSearch: (selection: VehicleSearchSelection) => void;
+  onSearchTyres: (payload: TyreSearchPayload) => void;
+  onResetTyres: () => void;
+  searchResetKey?: number;
 }
 
 export function SearchBar({
+  activeSearchTab,
+  onChangeSearchTab,
   query,
-  selectedBrand,
-  selectedModel,
-  selectedEngine,
-  selectedCategory,
-  onQueryChange,
-  onBrandChange,
-  onModelChange,
-  onEngineChange,
-  onCategoryChange,
+  initialTipoVeicolo = "auto",
+  isOemSearching = false,
+  onSelectionChange,
   onSubmitSearch,
   onResetSearch,
-  hasActiveQuickSearch,
+  onSearchTyres,
+  onResetTyres,
+  searchResetKey = 0,
 }: SearchBarProps) {
-  const {
-    brands,
-    models,
-    engines,
-    loadingBrands,
-    loadingModels,
-    loadingEngines,
-  } = useVehicleCascade({
-    selectedBrand,
-    selectedModel,
-  });
-
-  const isBrandSelected = Boolean(selectedBrand && selectedBrand !== "all");
-  const isModelSelected = Boolean(selectedModel && selectedModel !== "all");
-
   return (
     <section
       id="ricerca-avanzata"
@@ -74,11 +52,11 @@ export function SearchBar({
               CasaLavoroPRO · Sezione Automotive B2B
             </p>
             <h1 className="mt-2.5 max-w-2xl font-display text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl lg:text-[42px] lg:leading-[1.15] [text-wrap:balance]">
-              Ricambi originali usati e certificati per la tua officina
+              Ricambi originali usati, OEM e pneumatici per la tua officina
             </h1>
             <p className="mt-3.5 max-w-xl text-base leading-relaxed text-slate-600">
-              Cerca per codice OEM, numero di telaio o veicolo compatibile. Fornitura diretta da
-              autodemolitori professionali verificati con spedizione espressa in 24/48 ore.
+              Cerca per codice OEM, veicolo compatibile o misura pneumatico. Fornitura diretta da
+              autodemolitori e distributori verificati con spedizione espressa in 24/48 ore.
             </p>
 
             {/* Adjacent Proof Metrics */}
@@ -110,173 +88,68 @@ export function SearchBar({
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/50 via-transparent to-transparent" />
               <div className="absolute bottom-3.5 left-4 right-4 flex items-center justify-between text-xs font-medium text-white">
                 <span>Ispezione al banco su ogni unità</span>
-                <span className="font-mono tabular-nums opacity-90">OEM · VIN Ready</span>
+                <span className="font-mono tabular-nums opacity-90">OEM · VIN · Tyre</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Prominent B2B Cascading SearchBar collegata al database Supabase `auto` */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmitSearch();
-          }}
-          className="mt-8 rounded-2xl border border-slate-200 bg-[#F9FAFB] p-3 sm:p-4 shadow-xs"
-        >
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
-            {/* Ricerca libera OEM / Descrizione */}
-            <div className="relative lg:col-span-3">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={query}
-                onChange={(e) => onQueryChange(e.target.value)}
-                placeholder="Codice OEM, ricambio o motore..."
-                aria-label="Cerca per codice OEM o descrizione ricambio"
-                className="h-11 pl-10 bg-white"
-              />
-            </div>
+        {/* Commutatore Tab Principale: "Ricambi Auto" vs "Pneumatici" */}
+        <div className="mt-8">
+          <div
+            role="tablist"
+            aria-label="Seleziona modulo di ricerca"
+            className="mb-3 inline-flex rounded-xl border border-slate-200 bg-[#F9FAFB] p-1"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeSearchTab === "ricambi"}
+              onClick={() => onChangeSearchTab("ricambi")}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
+                activeSearchTab === "ricambi"
+                  ? "bg-white text-[#1E3A8A] shadow-xs ring-1 ring-slate-200/80"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Wrench className="h-4 w-4" />
+              <span>Ricambi Auto</span>
+            </button>
 
-            {/* Menu 1: Marca (caricata alfabeticamente all'avvio) */}
-            <div className="lg:col-span-2">
-              <Select
-                value={loadingBrands ? undefined : selectedBrand}
-                disabled={loadingBrands}
-                onValueChange={(value) => {
-                  onBrandChange(value);
-                  onModelChange("all");
-                  onEngineChange("all");
-                }}
-              >
-                <SelectTrigger aria-label="Seleziona Marca" className="h-11 bg-white">
-                  {loadingBrands ? (
-                    <span className="inline-flex items-center gap-2 text-slate-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
-                      <span>Caricamento...</span>
-                    </span>
-                  ) : (
-                    <SelectValue placeholder="Marca" />
-                  )}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tutte le marche</SelectItem>
-                  {brands.map((make) => (
-                    <SelectItem key={make} value={make}>
-                      {make}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Menu 2: Modello (abilitato dopo la scelta della marca) */}
-            <div className="lg:col-span-2">
-              <Select
-                value={loadingModels ? undefined : selectedModel}
-                disabled={!isBrandSelected || loadingModels}
-                onValueChange={(value) => {
-                  onModelChange(value);
-                  onEngineChange("all");
-                }}
-              >
-                <SelectTrigger aria-label="Seleziona Modello" className="h-11 bg-white">
-                  {loadingModels ? (
-                    <span className="inline-flex items-center gap-2 text-slate-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
-                      <span>Caricamento...</span>
-                    </span>
-                  ) : (
-                    <SelectValue
-                      placeholder={
-                        isBrandSelected ? "Seleziona modello" : "Modello (scegli marca)"
-                      }
-                    />
-                  )}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tutti i modelli</SelectItem>
-                  {models.map((model) => (
-                    <SelectItem key={model} value={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Menu 3: Motore / Versione (abilitato dopo la scelta del modello) */}
-            <div className="lg:col-span-3">
-              <Select
-                value={loadingEngines ? undefined : selectedEngine}
-                disabled={!isBrandSelected || !isModelSelected || loadingEngines}
-                onValueChange={onEngineChange}
-              >
-                <SelectTrigger
-                  aria-label="Seleziona Motore o Versione"
-                  className="h-11 bg-white"
-                >
-                  {loadingEngines ? (
-                    <span className="inline-flex items-center gap-2 text-slate-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
-                      <span>Caricamento in corso...</span>
-                    </span>
-                  ) : (
-                    <SelectValue
-                      placeholder={
-                        isModelSelected
-                          ? "Motore / Versione"
-                          : "Motore (scegli modello)"
-                      }
-                    />
-                  )}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tutte le motorizzazioni</SelectItem>
-                  {engines.map((engine) => (
-                    <SelectItem key={engine.value} value={engine.value}>
-                      {engine.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Pulsanti Cerca e Reset */}
-            <div className="flex items-center gap-2 lg:col-span-2">
-              <Button type="submit" size="lg" className="h-11 flex-1 px-4">
-                <Search className="h-4 w-4" />
-                Cerca
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                onClick={onResetSearch}
-                disabled={!hasActiveQuickSearch}
-                title="Svuota selettori e ripristina catalogo"
-                className="h-11 shrink-0 bg-white px-3 text-slate-700"
-              >
-                <RotateCcw className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">Reset</span>
-              </Button>
-            </div>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeSearchTab === "pneumatici"}
+              onClick={() => onChangeSearchTab("pneumatici")}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
+                activeSearchTab === "pneumatici"
+                  ? "bg-white text-[#1E3A8A] shadow-xs ring-1 ring-slate-200/80"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <CircleDot className="h-4 w-4 text-orange-500" />
+              <span>Pneumatici</span>
+            </button>
           </div>
 
-          {/* Seconda riga: Filtro Categoria a 2 livelli (public.categorie_sito) */}
-          <div className="mt-3 border-t border-slate-200/80 pt-3">
-            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4">
-              <span className="shrink-0 text-xs font-semibold text-slate-500">
-                Categoria ricambio:
-              </span>
-              <CategorySelector
-                variant="filter"
-                value={selectedCategory}
-                onCategorySelect={onCategoryChange}
-                className="flex-1"
-              />
-            </div>
-          </div>
-        </form>
+          {activeSearchTab === "ricambi" ? (
+            <VehicleSearchBox
+              key={`vsb-${searchResetKey}`}
+              initialTipoVeicolo={initialTipoVeicolo}
+              query={query}
+              isOemSearching={isOemSearching}
+              onChange={onSelectionChange}
+              onSearch={onSubmitSearch}
+              onReset={onResetSearch}
+            />
+          ) : (
+            <TyreSelector
+              key={`tyre-${searchResetKey}`}
+              onSearch={onSearchTyres}
+              onReset={onResetTyres}
+            />
+          )}
+        </div>
       </div>
     </section>
   );
