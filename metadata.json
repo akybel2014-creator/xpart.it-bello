@@ -1,0 +1,8 @@
+{
+  "name": "CasaLavoroPRO - Sezione Automotive",
+  "description": "Marketplace B2B per autoricambi usati, ricondizionati e OEM certificati da autodemolitori verificati.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
