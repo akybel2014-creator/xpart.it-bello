@@ -2,6 +2,7 @@ import { RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CartDrawer, type CartItem } from "@/src/components/CartDrawer";
+import type { CategoriaSito } from "@/src/components/CategorySelector";
 import { CategorySidebar, type FilterState } from "@/src/components/CategorySidebar";
 import { Header, type PortalView } from "@/src/components/Header";
 import { ProductCard } from "@/src/components/ProductCard";
@@ -42,7 +43,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
   const [selectedModel, setSelectedModel] = useState("all");
-  const [selectedYear, setSelectedYear] = useState("all");
+  const [selectedEngine, setSelectedEngine] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState<CategoriaSito | null>(null);
 
   // Sidebar & Sort state
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -62,7 +64,8 @@ export default function App() {
     searchQuery.trim() !== "" ||
     selectedBrand !== "all" ||
     selectedModel !== "all" ||
-    selectedYear !== "all";
+    selectedEngine !== "all" ||
+    selectedCategory !== null;
 
   const activeSidebarFilterCount = useMemo(() => {
     let count = 0;
@@ -85,16 +88,71 @@ export default function App() {
         if (!searchable.includes(q)) return false;
       }
 
-      if (selectedBrand !== "all" && part.brand !== selectedBrand) return false;
-      if (selectedModel !== "all" && part.model !== selectedModel) return false;
+      if (
+        selectedBrand !== "all" &&
+        part.brand.toLowerCase() !== selectedBrand.toLowerCase()
+      ) {
+        return false;
+      }
 
-      if (selectedYear !== "all") {
-        const y = Number(selectedYear);
-        if (y < part.yearFrom || y > part.yearTo) return false;
+      if (selectedModel !== "all") {
+        const cleanSelected = selectedModel
+          .replace(/\([^)]*\)/g, " ")
+          .toLowerCase()
+          .trim();
+        const partModelLower = part.model.toLowerCase();
+        const modelTokens = partModelLower
+          .split(/[\s/]+/)
+          .filter((t) => t.length >= 2);
+        const matchesModel =
+          cleanSelected.includes(partModelLower) ||
+          partModelLower.includes(cleanSelected) ||
+          modelTokens.some((t) => cleanSelected.includes(t));
+        if (!matchesModel) return false;
+      }
+
+      if (selectedEngine !== "all") {
+        const cleanEngine = selectedEngine
+          .replace(/\([^)]*\)/g, " ")
+          .toLowerCase();
+        const engineTokens = cleanEngine
+          .split(/[\s·/]+/)
+          .map((t) => t.replace(/^cod\.\s*/i, "").trim())
+          .filter((t) => t.length >= 2 && !["kw", "cv"].includes(t));
+        const target = `${part.engineCode} ${part.description}`.toLowerCase();
+        const matchesEngine = engineTokens.some((token) => target.includes(token));
+        if (!matchesEngine) return false;
       }
 
       if (filters.categoryId && part.category !== filters.categoryId) return false;
       if (filters.subcategoryId && part.subcategory !== filters.subcategoryId) return false;
+
+      if (selectedCategory) {
+        const catText = `${selectedCategory.slug} ${selectedCategory.nome} ${selectedCategory.macro_gruppo}`.toLowerCase();
+        const partText = `${part.category} ${part.subcategory} ${part.title} ${part.description}`.toLowerCase();
+        const synonymMap: Record<string, string[]> = {
+          freni: ["frenante", "pinza", "disco", "brembo"],
+          motore: ["motore", "turbocompressore", "alternatore"],
+          illuminazione: ["illuminazione", "faro", "proiettore", "led"],
+          cambio: ["trasmissione", "cambio", "dsg"],
+          ammortizzazione: ["sospensioni", "ammortizzatore", "macpherson"],
+          sospensioni: ["sospensioni", "ammortizzatore"],
+          sterzo: ["sospensioni", "sterzo", "scatola"],
+          "impianto-elettrico": ["elettronica", "centralina", "alternatore", "ecu"],
+          "sensori-rele-unita-controllo": ["elettronica", "centralina", "ecu"],
+        };
+        const mappedTerms = synonymMap[selectedCategory.slug] ?? [];
+        const tokens = selectedCategory.nome
+          .toLowerCase()
+          .split(/[\s,]+/)
+          .filter((t) => t.length >= 4);
+        const matchesCat =
+          partText.includes(selectedCategory.slug) ||
+          mappedTerms.some((term) => partText.includes(term)) ||
+          tokens.some((tok) => partText.includes(tok)) ||
+          catText.includes(part.category.toLowerCase());
+        if (!matchesCat) return false;
+      }
 
       if (part.yearTo < filters.yearFrom || part.yearFrom > filters.yearTo) {
         return false;
@@ -129,7 +187,15 @@ export default function App() {
       return [...list].sort((a, b) => b.yearTo - a.yearTo);
     }
     return list;
-  }, [searchQuery, selectedBrand, selectedModel, selectedYear, filters, sortBy]);
+  }, [
+    searchQuery,
+    selectedBrand,
+    selectedModel,
+    selectedEngine,
+    selectedCategory,
+    filters,
+    sortBy,
+  ]);
 
   const totalCartUnits = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -174,7 +240,8 @@ export default function App() {
     setSearchQuery("");
     setSelectedBrand("all");
     setSelectedModel("all");
-    setSelectedYear("all");
+    setSelectedEngine("all");
+    setSelectedCategory(null);
   };
 
   const handleResetAll = () => {
@@ -243,11 +310,13 @@ export default function App() {
             query={searchQuery}
             selectedBrand={selectedBrand}
             selectedModel={selectedModel}
-            selectedYear={selectedYear}
+            selectedEngine={selectedEngine}
+            selectedCategory={selectedCategory}
             onQueryChange={setSearchQuery}
             onBrandChange={setSelectedBrand}
             onModelChange={setSelectedModel}
-            onYearChange={setSelectedYear}
+            onEngineChange={setSelectedEngine}
+            onCategoryChange={setSelectedCategory}
             onSubmitSearch={() => scrollToSection("catalogo-ricambi")}
             onResetSearch={handleResetQuickSearch}
             hasActiveQuickSearch={hasActiveQuickSearch}

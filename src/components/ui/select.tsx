@@ -46,7 +46,7 @@ export function SelectContent({
         )}
         {...props}
       >
-        <SelectPrimitive.Viewport className="p-1.5">
+        <SelectPrimitive.Viewport className="max-h-64 overflow-y-auto p-1.5">
           {children}
         </SelectPrimitive.Viewport>
       </SelectPrimitive.Content>

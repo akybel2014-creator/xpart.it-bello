@@ -122,7 +122,7 @@ export function SellerDashboard() {
       }
       if (!q) return true;
       const haystack =
-        `${item.titolo} ${item.codice_oem} ${item.marca} ${item.modello} ${item.categoria}`.toLowerCase();
+        `${item.titolo} ${item.codice_oem} ${item.marca} ${item.modello} ${item.motore ?? ""} ${item.categoria}`.toLowerCase();
       return haystack.includes(q);
     });
   }, [ricambi, searchQuery, partStatusFilter]);
@@ -506,6 +506,11 @@ export function SellerDashboard() {
                           <p className="mt-0.5 text-xs text-slate-500 tabular-nums whitespace-nowrap">
                             {part.anno_inizio}–{part.anno_fine} · {part.condizione}
                           </p>
+                          {part.motore && (
+                            <p className="mt-0.5 max-w-[240px] truncate text-[11px] text-slate-400">
+                              {part.motore}
+                            </p>
+                          )}
                         </td>
 
                         <td className="px-3 py-3.5 text-right align-middle whitespace-nowrap">

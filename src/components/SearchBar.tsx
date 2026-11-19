@@ -1,4 +1,4 @@
-import { RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { Loader2, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import {
@@ -8,39 +8,58 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/src/components/ui/select";
-import { HERO_BANNER_IMAGE, VEHICLE_MAKES } from "@/src/data/parts";
+import {
+  CategorySelector,
+  type CategoriaSito,
+} from "@/src/components/CategorySelector";
+import { HERO_BANNER_IMAGE } from "@/src/data/parts";
+import { useVehicleCascade } from "@/src/hooks/useVehicleCascade";
 
 interface SearchBarProps {
   query: string;
   selectedBrand: string;
   selectedModel: string;
-  selectedYear: string;
+  selectedEngine: string;
+  selectedCategory: CategoriaSito | null;
   onQueryChange: (value: string) => void;
   onBrandChange: (value: string) => void;
   onModelChange: (value: string) => void;
-  onYearChange: (value: string) => void;
+  onEngineChange: (value: string) => void;
+  onCategoryChange: (cat: CategoriaSito | null) => void;
   onSubmitSearch: () => void;
   onResetSearch: () => void;
   hasActiveQuickSearch: boolean;
 }
 
-const YEARS = Array.from({ length: 11 }, (_, idx) => String(2025 - idx));
-
 export function SearchBar({
   query,
   selectedBrand,
   selectedModel,
-  selectedYear,
+  selectedEngine,
+  selectedCategory,
   onQueryChange,
   onBrandChange,
   onModelChange,
-  onYearChange,
+  onEngineChange,
+  onCategoryChange,
   onSubmitSearch,
   onResetSearch,
   hasActiveQuickSearch,
 }: SearchBarProps) {
-  const availableModels =
-    selectedBrand && selectedBrand !== "all" ? VEHICLE_MAKES[selectedBrand] ?? [] : [];
+  const {
+    brands,
+    models,
+    engines,
+    loadingBrands,
+    loadingModels,
+    loadingEngines,
+  } = useVehicleCascade({
+    selectedBrand,
+    selectedModel,
+  });
+
+  const isBrandSelected = Boolean(selectedBrand && selectedBrand !== "all");
+  const isModelSelected = Boolean(selectedModel && selectedModel !== "all");
 
   return (
     <section
@@ -97,7 +116,7 @@ export function SearchBar({
           </div>
         </div>
 
-        {/* Prominent B2B SearchBar with Shadcn Select Controls */}
+        {/* Prominent B2B Cascading SearchBar collegata al database Supabase `auto` */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -105,32 +124,43 @@ export function SearchBar({
           }}
           className="mt-8 rounded-2xl border border-slate-200 bg-[#F9FAFB] p-3 sm:p-4 shadow-xs"
         >
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-center">
-            <div className="relative md:col-span-4">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
+            {/* Ricerca libera OEM / Descrizione */}
+            <div className="relative lg:col-span-3">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => onQueryChange(e.target.value)}
-                placeholder="Codice OEM, ricambio o motore (es. 55264310)..."
+                placeholder="Codice OEM, ricambio o motore..."
                 aria-label="Cerca per codice OEM o descrizione ricambio"
                 className="h-11 pl-10 bg-white"
               />
             </div>
 
-            <div className="md:col-span-2">
+            {/* Menu 1: Marca (caricata alfabeticamente all'avvio) */}
+            <div className="lg:col-span-2">
               <Select
-                value={selectedBrand}
+                value={loadingBrands ? undefined : selectedBrand}
+                disabled={loadingBrands}
                 onValueChange={(value) => {
                   onBrandChange(value);
                   onModelChange("all");
+                  onEngineChange("all");
                 }}
               >
                 <SelectTrigger aria-label="Seleziona Marca" className="h-11 bg-white">
-                  <SelectValue placeholder="Marca veicolo" />
+                  {loadingBrands ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento...</span>
+                    </span>
+                  ) : (
+                    <SelectValue placeholder="Marca" />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tutte le marche</SelectItem>
-                  {Object.keys(VEHICLE_MAKES).map((make) => (
+                  {brands.map((make) => (
                     <SelectItem key={make} value={make}>
                       {make}
                     </SelectItem>
@@ -139,18 +169,33 @@ export function SearchBar({
               </Select>
             </div>
 
-            <div className="md:col-span-2">
+            {/* Menu 2: Modello (abilitato dopo la scelta della marca) */}
+            <div className="lg:col-span-2">
               <Select
-                value={selectedModel}
-                onValueChange={onModelChange}
-                disabled={!selectedBrand || selectedBrand === "all"}
+                value={loadingModels ? undefined : selectedModel}
+                disabled={!isBrandSelected || loadingModels}
+                onValueChange={(value) => {
+                  onModelChange(value);
+                  onEngineChange("all");
+                }}
               >
                 <SelectTrigger aria-label="Seleziona Modello" className="h-11 bg-white">
-                  <SelectValue placeholder="Modello" />
+                  {loadingModels ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento...</span>
+                    </span>
+                  ) : (
+                    <SelectValue
+                      placeholder={
+                        isBrandSelected ? "Seleziona modello" : "Modello (scegli marca)"
+                      }
+                    />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tutti i modelli</SelectItem>
-                  {availableModels.map((model) => (
+                  {models.map((model) => (
                     <SelectItem key={model} value={model}>
                       {model}
                     </SelectItem>
@@ -159,40 +204,76 @@ export function SearchBar({
               </Select>
             </div>
 
-            <div className="md:col-span-2">
-              <Select value={selectedYear} onValueChange={onYearChange}>
-                <SelectTrigger aria-label="Seleziona Anno" className="h-11 bg-white">
-                  <SelectValue placeholder="Anno" />
+            {/* Menu 3: Motore / Versione (abilitato dopo la scelta del modello) */}
+            <div className="lg:col-span-3">
+              <Select
+                value={loadingEngines ? undefined : selectedEngine}
+                disabled={!isBrandSelected || !isModelSelected || loadingEngines}
+                onValueChange={onEngineChange}
+              >
+                <SelectTrigger
+                  aria-label="Seleziona Motore o Versione"
+                  className="h-11 bg-white"
+                >
+                  {loadingEngines ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento in corso...</span>
+                    </span>
+                  ) : (
+                    <SelectValue
+                      placeholder={
+                        isModelSelected
+                          ? "Motore / Versione"
+                          : "Motore (scegli modello)"
+                      }
+                    />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Tutti gli anni</SelectItem>
-                  {YEARS.map((year) => (
-                    <SelectItem key={year} value={year}>
-                      {year}
+                  <SelectItem value="all">Tutte le motorizzazioni</SelectItem>
+                  {engines.map((engine) => (
+                    <SelectItem key={engine.value} value={engine.value}>
+                      {engine.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="flex items-center gap-2 md:col-span-2">
-              <Button type="submit" size="lg" className="h-11 w-full">
+            {/* Pulsanti Cerca e Reset */}
+            <div className="flex items-center gap-2 lg:col-span-2">
+              <Button type="submit" size="lg" className="h-11 flex-1 px-4">
                 <Search className="h-4 w-4" />
-                Cerca Ricambi
+                Cerca
               </Button>
-              {hasActiveQuickSearch && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={onResetSearch}
-                  title="Ripristina ricerca rapida"
-                  aria-label="Ripristina ricerca rapida"
-                  className="h-11 w-11 shrink-0 bg-white"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                onClick={onResetSearch}
+                disabled={!hasActiveQuickSearch}
+                title="Svuota selettori e ripristina catalogo"
+                className="h-11 shrink-0 bg-white px-3 text-slate-700"
+              >
+                <RotateCcw className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">Reset</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Seconda riga: Filtro Categoria a 2 livelli (public.categorie_sito) */}
+          <div className="mt-3 border-t border-slate-200/80 pt-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4">
+              <span className="shrink-0 text-xs font-semibold text-slate-500">
+                Categoria ricambio:
+              </span>
+              <CategorySelector
+                variant="filter"
+                value={selectedCategory}
+                onCategorySelect={onCategoryChange}
+                className="flex-1"
+              />
             </div>
           </div>
         </form>

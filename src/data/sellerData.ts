@@ -12,8 +12,11 @@ export interface RicambioRecord {
   titolo: string;
   codice_oem: string;
   categoria: string;
+  categoria_id?: string;
+  categoria_slug?: string;
   marca: string;
   modello: string;
+  motore?: string;
   anno_inizio: number;
   anno_fine: number;
   condizione: PartCondition;
@@ -103,6 +106,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Motore & Sovralimentazione",
     marca: "Alfa Romeo",
     modello: "Giulia",
+    motore: "2.2 JTDM · 2143 cc · 190 CV · Diesel · Cod. 55273835",
     anno_inizio: 2018,
     anno_fine: 2023,
     condizione: "Usato Grado A",
@@ -120,6 +124,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Trasmissione & Cambio",
     marca: "Volkswagen",
     modello: "Tiguan",
+    motore: "2.0 TDI 4Motion · 1968 cc · 150 CV · Diesel · Cod. DFGA",
     anno_inizio: 2017,
     anno_fine: 2022,
     condizione: "Usato Grado A",
@@ -137,6 +142,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Illuminazione & Ottica",
     marca: "Audi",
     modello: "A3 8V/8Y",
+    motore: "35 TFSI · 1498 cc · 150 CV · Benzina · Cod. DADA",
     anno_inizio: 2020,
     anno_fine: 2024,
     condizione: "Usato Grado A",
@@ -154,6 +160,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Elettronica & Centraline",
     marca: "Volkswagen",
     modello: "Golf VII/VIII",
+    motore: "2.0 TDI · 1968 cc · 150 CV · Diesel · Cod. CRLB / DCYA",
     anno_inizio: 2016,
     anno_fine: 2021,
     condizione: "Ricondizionato OEM",
@@ -171,6 +178,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Impianto Frenante",
     marca: "Alfa Romeo",
     modello: "Stelvio",
+    motore: "2.2 JTDM Q4 · 2143 cc · 210 CV · Diesel · Cod. 46335975",
     anno_inizio: 2019,
     anno_fine: 2024,
     condizione: "Usato Grado A",
@@ -188,6 +196,7 @@ export const INITIAL_SELLER_RICAMBI: RicambioRecord[] = [
     categoria: "Sospensioni & Sterzo",
     marca: "Mercedes-Benz",
     modello: "Classe C W205",
+    motore: "C 220 d · 2143 cc · 170 CV · Diesel · Cod. OM651",
     anno_inizio: 2016,
     anno_fine: 2021,
     condizione: "Ricondizionato OEM",

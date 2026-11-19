@@ -1,4 +1,6 @@
+import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/src/components/ui/button";
 import {
   Dialog,
@@ -15,19 +17,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/src/components/ui/select";
+import {
+  CategorySelector,
+  type CategoriaSito,
+} from "@/src/components/CategorySelector";
 import type { PartCondition } from "@/src/data/parts";
 import {
-  SELLER_CATEGORIES,
   STUDIO_IMAGE_PRESETS,
   type RicambioRecord,
 } from "@/src/data/sellerData";
+import { useVehicleCascade } from "@/src/hooks/useVehicleCascade";
 
 export interface SellerPartFormValues {
   titolo: string;
   codice_oem: string;
   categoria: string;
+  categoria_id?: string;
+  categoria_slug?: string;
   marca: string;
   modello: string;
+  motore: string;
   anno_inizio: number;
   anno_fine: number;
   condizione: PartCondition;
@@ -59,9 +68,12 @@ export function SellerPartModal({
 }: SellerPartModalProps) {
   const [titolo, setTitolo] = useState("");
   const [codiceOem, setCodiceOem] = useState("");
-  const [categoria, setCategoria] = useState(SELLER_CATEGORIES[0]);
+  const [selectedCategoria, setSelectedCategoria] = useState<CategoriaSito | null>(
+    null
+  );
   const [marca, setMarca] = useState("");
   const [modello, setModello] = useState("");
+  const [motore, setMotore] = useState("");
   const [annoInizio, setAnnoInizio] = useState("2018");
   const [annoFine, setAnnoFine] = useState("2023");
   const [condizione, setCondizione] = useState<PartCondition>("Usato Grado A");
@@ -69,14 +81,36 @@ export function SellerPartModal({
   const [citta, setCitta] = useState(defaultCity);
   const [fotoUrl, setFotoUrl] = useState(STUDIO_IMAGE_PRESETS[0].url);
 
+  const {
+    brands,
+    models,
+    engines,
+    loadingBrands,
+    loadingModels,
+    loadingEngines,
+  } = useVehicleCascade({
+    selectedBrand: marca,
+    selectedModel: modello,
+  });
+
   useEffect(() => {
     if (!open) return;
     if (editingPart) {
       setTitolo(editingPart.titolo);
       setCodiceOem(editingPart.codice_oem);
-      setCategoria(editingPart.categoria);
+      setSelectedCategoria(
+        editingPart.categoria
+          ? {
+              id: editingPart.categoria_id || "",
+              nome: editingPart.categoria,
+              slug: editingPart.categoria_slug || "",
+              macro_gruppo: "Principale",
+            }
+          : null
+      );
       setMarca(editingPart.marca);
       setModello(editingPart.modello);
+      setMotore(editingPart.motore || "");
       setAnnoInizio(String(editingPart.anno_inizio));
       setAnnoFine(String(editingPart.anno_fine));
       setCondizione(editingPart.condizione);
@@ -86,9 +120,10 @@ export function SellerPartModal({
     } else {
       setTitolo("");
       setCodiceOem("");
-      setCategoria(SELLER_CATEGORIES[0]);
+      setSelectedCategoria(null);
       setMarca("");
       setModello("");
+      setMotore("");
       setAnnoInizio("2018");
       setAnnoFine("2023");
       setCondizione("Usato Grado A");
@@ -100,6 +135,19 @@ export function SellerPartModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedCategoria?.nome) {
+      toast.error("Seleziona Macro-categoria e Sottocategoria dal catalogo.");
+      return;
+    }
+    if (!marca || !modello) {
+      toast.error("Seleziona Marca e Modello dal database veicoli.");
+      return;
+    }
+    if (engines.length > 0 && !motore) {
+      toast.error("Seleziona la motorizzazione / versione compatibile.");
+      return;
+    }
+
     const startYear = Number(annoInizio) || 2018;
     const endYear = Math.max(startYear, Number(annoFine) || startYear);
 
@@ -107,9 +155,12 @@ export function SellerPartModal({
       {
         titolo: titolo.trim(),
         codice_oem: codiceOem.trim() || "OEM-N/D",
-        categoria,
-        marca: marca.trim(),
-        modello: modello.trim(),
+        categoria: selectedCategoria.nome,
+        categoria_id: selectedCategoria.id || undefined,
+        categoria_slug: selectedCategoria.slug || undefined,
+        marca,
+        modello,
+        motore: motore || "Motorizzazione standard",
         anno_inizio: startYear,
         anno_fine: endYear,
         condizione,
@@ -130,8 +181,8 @@ export function SellerPartModal({
             {editingPart ? "Modifica Ricambio a Catalogo" : "Pubblica Nuovo Ricambio"}
           </DialogTitle>
           <DialogDescription>
-            Inserisci i dati tecnici e la compatibilità del ricambio per renderlo visibile
-            alle officine acquirenti.
+            Seleziona il veicolo compatibile dal database ufficiale e inserisci i dati
+            tecnici del ricambio.
           </DialogDescription>
         </DialogHeader>
 
@@ -154,30 +205,17 @@ export function SellerPartModal({
               />
             </div>
 
-            {/* Categoria */}
-            <div>
-              <label
-                htmlFor="part-category"
-                className="mb-1.5 block text-xs font-semibold text-slate-700"
-              >
-                Categoria *
-              </label>
-              <Select value={categoria} onValueChange={setCategoria}>
-                <SelectTrigger id="part-category">
-                  <SelectValue placeholder="Seleziona categoria" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SELLER_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Selezione Categoria a due livelli (public.categorie_sito) */}
+            <div className="sm:col-span-2">
+              <CategorySelector
+                variant="form"
+                value={selectedCategoria}
+                onCategorySelect={setSelectedCategoria}
+              />
             </div>
 
-            {/* Codice OEM opzionale */}
-            <div>
+            {/* Codice OEM */}
+            <div className="sm:col-span-2">
               <label
                 htmlFor="part-oem"
                 className="mb-1.5 block text-xs font-semibold text-slate-700"
@@ -193,7 +231,7 @@ export function SellerPartModal({
               />
             </div>
 
-            {/* Marca */}
+            {/* Menu a Cascata 1: Marca (da tabella Supabase `auto`) */}
             <div>
               <label
                 htmlFor="part-brand"
@@ -201,16 +239,36 @@ export function SellerPartModal({
               >
                 Marca veicolo *
               </label>
-              <Input
-                id="part-brand"
-                value={marca}
-                onChange={(e) => setMarca(e.target.value)}
-                placeholder="Es. BMW"
-                required
-              />
+              <Select
+                value={loadingBrands ? undefined : marca}
+                disabled={loadingBrands}
+                onValueChange={(value) => {
+                  setMarca(value);
+                  setModello("");
+                  setMotore("");
+                }}
+              >
+                <SelectTrigger id="part-brand">
+                  {loadingBrands ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento in corso...</span>
+                    </span>
+                  ) : (
+                    <SelectValue placeholder="Seleziona marca" />
+                  )}
+                </SelectTrigger>
+                <SelectContent>
+                  {brands.map((make) => (
+                    <SelectItem key={make} value={make}>
+                      {make}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            {/* Modello */}
+            {/* Menu a Cascata 2: Modello (abilitato dopo la scelta della marca) */}
             <div>
               <label
                 htmlFor="part-model"
@@ -218,13 +276,73 @@ export function SellerPartModal({
               >
                 Modello veicolo *
               </label>
-              <Input
-                id="part-model"
-                value={modello}
-                onChange={(e) => setModello(e.target.value)}
-                placeholder="Es. Serie 3 G20"
-                required
-              />
+              <Select
+                value={loadingModels ? undefined : modello}
+                disabled={!marca || loadingModels}
+                onValueChange={(value) => {
+                  setModello(value);
+                  setMotore("");
+                }}
+              >
+                <SelectTrigger id="part-model">
+                  {loadingModels ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento in corso...</span>
+                    </span>
+                  ) : (
+                    <SelectValue
+                      placeholder={marca ? "Seleziona modello" : "Prima scegli la marca"}
+                    />
+                  )}
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((mod) => (
+                    <SelectItem key={mod} value={mod}>
+                      {mod}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Menu a Cascata 3: Motore / Versione (abilitato dopo il modello) */}
+            <div className="sm:col-span-2">
+              <label
+                htmlFor="part-engine"
+                className="mb-1.5 block text-xs font-semibold text-slate-700"
+              >
+                Motore / Versione *
+              </label>
+              <Select
+                value={loadingEngines ? undefined : motore}
+                disabled={!marca || !modello || loadingEngines}
+                onValueChange={setMotore}
+              >
+                <SelectTrigger id="part-engine">
+                  {loadingEngines ? (
+                    <span className="inline-flex items-center gap-2 text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                      <span>Caricamento in corso...</span>
+                    </span>
+                  ) : (
+                    <SelectValue
+                      placeholder={
+                        modello
+                          ? "Seleziona motorizzazione / variante"
+                          : "Prima scegli il modello"
+                      }
+                    />
+                  )}
+                </SelectTrigger>
+                <SelectContent>
+                  {engines.map((eng) => (
+                    <SelectItem key={eng.value} value={eng.value}>
+                      {eng.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Anno inizio */}
@@ -348,7 +466,7 @@ export function SellerPartModal({
             </div>
           </div>
 
-          {/* Selettore rapido foto studio per test immediato */}
+          {/* Selettore rapido foto studio */}
           <div className="rounded-lg border border-slate-200 bg-[#F9FAFB] p-3">
             <span className="block text-[11px] font-medium text-slate-500">
               Anteprima rapida foto studio (opzionale):
