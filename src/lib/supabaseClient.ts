@@ -1,35 +1,63 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const rawUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
-const rawKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
+function sanitizeEnvValue(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/^["']+|["']+$/g, "").trim();
+}
 
-const normalizedUrl = rawUrl?.replace(/\/rest\/v1\/?.*$/i, "").replace(/\/+$/, "");
+function normalizeSupabaseUrl(raw: string): string {
+  if (!raw) return "";
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withProtocol.replace(/\/rest\/v1\/?.*$/i, "").replace(/\/+$/, "");
+}
 
-const envAutoTable = (import.meta.env.VITE_SUPABASE_AUTO_TABLE as string | undefined)?.trim();
+const rawUrl = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_URL);
+const rawKey = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_ANON_KEY);
+
+const supabaseUrl = normalizeSupabaseUrl(rawUrl);
+const supabaseAnonKey = rawKey;
+
+const envAutoTable = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_AUTO_TABLE);
 export const AUTO_TABLE_NAME: string =
   envAutoTable && envAutoTable !== "auto" ? envAutoTable : "vehicles";
 
 export const VEHICLES_BRANDS_VIEW = "vehicles_marche";
 export const CATEGORIES_TABLE_NAME = "categorie_sito";
 
-const hasValidConfig =
-  Boolean(normalizedUrl && rawKey) &&
-  !normalizedUrl?.includes("your-project-ref") &&
-  !rawKey?.includes("your-supabase-anon-key");
+const isPlaceholderUrl =
+  !supabaseUrl || supabaseUrl.includes("your-project-ref");
+const isPlaceholderKey =
+  !supabaseAnonKey || supabaseAnonKey.includes("your-supabase-anon-key");
 
-if (!hasValidConfig) {
+export const hasSupabaseConfig = !isPlaceholderUrl && !isPlaceholderKey;
+
+let clientInstance: SupabaseClient | null = null;
+let initErrorMessage: string | null = null;
+
+if (hasSupabaseConfig) {
+  try {
+    clientInstance = createClient(supabaseUrl, supabaseAnonKey);
+  } catch (err) {
+    initErrorMessage =
+      err instanceof Error
+        ? err.message
+        : "Errore inizializzazione client Supabase.";
+    console.error("[Supabase] Errore durante createClient():", err);
+  }
+} else {
+  initErrorMessage =
+    "Variabili VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY mancanti al momento del build.";
   console.error(
-    "[Supabase] Configurazione mancante o non valida. Verifica VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.",
+    "[Supabase] Configurazione mancante o non valida al build time. Verifica VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY (e riesegui il deploy su Cloudflare Pages).",
     {
-      normalizedUrl: normalizedUrl ?? null,
-      hasAnonKey: Boolean(rawKey),
+      hasViteSupabaseUrl: !isPlaceholderUrl,
+      hasViteSupabaseAnonKey: !isPlaceholderKey,
     }
   );
 }
 
-export const supabase: SupabaseClient | null = hasValidConfig
-  ? createClient(normalizedUrl!, rawKey!)
-  : null;
+export const supabase: SupabaseClient | null = clientInstance;
+export const supabaseConfigError: string | null = initErrorMessage;
 
 /**
  * Helper centralizzato di diagnostica per gli errori Supabase.

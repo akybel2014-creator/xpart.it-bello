@@ -4,6 +4,7 @@ import {
   CATEGORIES_TABLE_NAME,
   logSupabaseError,
   supabase as defaultSupabase,
+  supabaseConfigError,
 } from "@/src/lib/supabaseClient";
 
 /**
@@ -44,7 +45,10 @@ export async function salvaRicambioSuSupabase(
   if (!client) {
     return {
       data: null,
-      error: new Error("Client Supabase non configurato nelle variabili d'ambiente."),
+      error: new Error(
+        supabaseConfigError ||
+          "Client Supabase non configurato nelle variabili d'ambiente."
+      ),
     };
   }
 
@@ -132,9 +136,12 @@ export function CategorySelector({
 
       if (!supabaseClient) {
         console.error(
-          "[Supabase][CategorySelector] Client Supabase non configurato: impossibile leggere public.categorie_sito."
+          "[Supabase][CategorySelector] Client Supabase non configurato: impossibile leggere public.categorie_sito.",
+          { supabaseConfigError }
         );
-        setErrorMessage("Connessione Supabase non configurata.");
+        setErrorMessage(
+          supabaseConfigError || "Connessione Supabase non configurata."
+        );
         setLoading(false);
         return;
       }

@@ -5,9 +5,8 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 /**
- * Legge le variabili dal file locale `.env` (se presente) per sostituire eventuali
- * placeholder residui iniettati nell'ambiente del container (es. "your-project-ref"
- * o "your-supabase-anon-key") senza mai sovrascrivere credenziali reali in `process.env`.
+ * Legge le variabili dal file locale `.env` (se presente) per lo sviluppo locale,
+ * senza mai sovrascrivere credenziali reali fornite da `process.env` (es. Cloudflare Pages).
  */
 function readLocalEnvFile(envPath: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -23,7 +22,7 @@ function readLocalEnvFile(envPath: string): Record<string, string> {
     const val = line
       .slice(eqIndex + 1)
       .trim()
-      .replace(/^["']|["']$/g, '');
+      .replace(/^["']+|["']+$/g, '');
     if (key && val) {
       result[key] = val;
     }
@@ -31,35 +30,74 @@ function readLocalEnvFile(envPath: string): Record<string, string> {
   return result;
 }
 
+function cleanValue(value?: string): string {
+  return (value ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
 function isPlaceholderValue(key: string, value?: string): boolean {
-  if (!value || !value.trim()) return true;
-  const trimmed = value.trim();
+  const cleaned = cleanValue(value);
+  if (!cleaned) return true;
   if (key === 'VITE_SUPABASE_URL') {
-    return trimmed.includes('your-project-ref');
+    return cleaned.includes('your-project-ref');
   }
   if (key === 'VITE_SUPABASE_ANON_KEY') {
-    return trimmed.includes('your-supabase-anon-key');
+    return cleaned.includes('your-supabase-anon-key');
   }
   if (key === 'VITE_SUPABASE_AUTO_TABLE') {
-    return trimmed === 'auto';
+    return cleaned === 'auto';
   }
   return false;
+}
+
+function pickFirstValid(
+  canonicalKey: string,
+  candidates: Array<string | undefined>
+): string | undefined {
+  for (const raw of candidates) {
+    const cleaned = cleanValue(raw);
+    if (cleaned && !isPlaceholderValue(canonicalKey, cleaned)) {
+      return cleaned;
+    }
+  }
+  return undefined;
 }
 
 export default defineConfig(() => {
   const localEnv = readLocalEnvFile(path.resolve(__dirname, '.env'));
   const defineOverrides: Record<string, string> = {};
 
-  for (const key of [
-    'VITE_SUPABASE_URL',
-    'VITE_SUPABASE_ANON_KEY',
-    'VITE_SUPABASE_AUTO_TABLE',
-  ]) {
-    const procVal = process.env[key];
-    const fileVal = localEnv[key];
-    if (isPlaceholderValue(key, procVal) && fileVal && !isPlaceholderValue(key, fileVal)) {
-      defineOverrides[`import.meta.env.${key}`] = JSON.stringify(fileVal);
-    }
+  // Supporta sia i nomi ufficiali Vite (VITE_*) sia eventuali alias comuni su Cloudflare Pages
+  const resolvedUrl = pickFirstValid('VITE_SUPABASE_URL', [
+    process.env.VITE_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.REACT_APP_SUPABASE_URL,
+    process.env.SUPABASE_URL,
+    localEnv.VITE_SUPABASE_URL,
+  ]);
+
+  const resolvedAnonKey = pickFirstValid('VITE_SUPABASE_ANON_KEY', [
+    process.env.VITE_SUPABASE_ANON_KEY,
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    process.env.VITE_SUPABASE_KEY,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    process.env.REACT_APP_SUPABASE_ANON_KEY,
+    process.env.SUPABASE_ANON_KEY,
+    localEnv.VITE_SUPABASE_ANON_KEY,
+  ]);
+
+  const resolvedAutoTable = pickFirstValid('VITE_SUPABASE_AUTO_TABLE', [
+    process.env.VITE_SUPABASE_AUTO_TABLE,
+    localEnv.VITE_SUPABASE_AUTO_TABLE,
+  ]);
+
+  if (resolvedUrl) {
+    defineOverrides['import.meta.env.VITE_SUPABASE_URL'] = JSON.stringify(resolvedUrl);
+  }
+  if (resolvedAnonKey) {
+    defineOverrides['import.meta.env.VITE_SUPABASE_ANON_KEY'] = JSON.stringify(resolvedAnonKey);
+  }
+  if (resolvedAutoTable) {
+    defineOverrides['import.meta.env.VITE_SUPABASE_AUTO_TABLE'] = JSON.stringify(resolvedAutoTable);
   }
 
   return {
