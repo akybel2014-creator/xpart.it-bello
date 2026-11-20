@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AUTO_TABLE_FALLBACK } from "@/src/data/autoFallback";
 import {
   AUTO_TABLE_NAME,
+  VEHICLES_BRANDS_VIEW,
   fetchDistinctVehicleBrands,
   fetchVehicleModels,
   fetchVehicleVersions,
@@ -34,7 +35,7 @@ let cachedBrands: string[] | null = null;
 const cachedModelsByBrand = new Map<string, string[]>();
 const cachedEnginesByBrandModel = new Map<string, EngineOption[]>();
 
-const BRANDS_STORAGE_KEY = `clp_brands_v2_${AUTO_TABLE_NAME}`;
+const BRANDS_STORAGE_KEY = `clp_brands_v3_${VEHICLES_BRANDS_VIEW}`;
 
 export function useVehicleCascade({
   selectedBrand,
@@ -108,7 +109,7 @@ export function useVehicleCascade({
 
         if (!cancelled) setBrands(distinct);
       } catch (err) {
-        logSupabaseError("useVehicleCascade:loadBrands", AUTO_TABLE_NAME, err);
+        logSupabaseError("useVehicleCascade:loadBrands", VEHICLES_BRANDS_VIEW, err);
         if (!cancelled) {
           setError(
             err instanceof Error

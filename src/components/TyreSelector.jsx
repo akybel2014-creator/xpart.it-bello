@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   AUTO_TABLE_NAME,
+  VEHICLES_BRANDS_VIEW,
   fetchDistinctVehicleBrands,
   fetchVehicleModels,
   fetchVehicleVersions,
@@ -298,7 +299,7 @@ export function TyreSelector({
       } catch (err) {
         logSupabaseError(
           "TyreSelector:loadVehicleBrands",
-          activeTabMeta.supabaseTipo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          activeTabMeta.supabaseTipo === "auto" ? VEHICLES_BRANDS_VIEW : "veicoli_sito",
           err
         );
         const fb = Array.from(

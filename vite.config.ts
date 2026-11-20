@@ -44,7 +44,10 @@ function isPlaceholderValue(key: string, value?: string): boolean {
     return cleaned.includes('your-supabase-anon-key');
   }
   if (key === 'VITE_SUPABASE_AUTO_TABLE') {
-    return cleaned === 'auto';
+    return cleaned === 'auto' || cleaned === 'veichles';
+  }
+  if (key === 'VITE_SUPABASE_BRANDS_VIEW') {
+    return cleaned === 'auto' || cleaned === 'veichles';
   }
   return false;
 }
@@ -85,10 +88,17 @@ export default defineConfig(() => {
     localEnv.VITE_SUPABASE_ANON_KEY,
   ]);
 
-  const resolvedAutoTable = pickFirstValid('VITE_SUPABASE_AUTO_TABLE', [
-    process.env.VITE_SUPABASE_AUTO_TABLE,
-    localEnv.VITE_SUPABASE_AUTO_TABLE,
-  ]);
+  const resolvedBrandsView =
+    pickFirstValid('VITE_SUPABASE_BRANDS_VIEW', [
+      process.env.VITE_SUPABASE_BRANDS_VIEW,
+      localEnv.VITE_SUPABASE_BRANDS_VIEW,
+    ]) || 'vehicles_marche';
+
+  const resolvedAutoTable =
+    pickFirstValid('VITE_SUPABASE_AUTO_TABLE', [
+      process.env.VITE_SUPABASE_AUTO_TABLE,
+      localEnv.VITE_SUPABASE_AUTO_TABLE,
+    ]) || 'vehicles';
 
   if (resolvedUrl) {
     defineOverrides['import.meta.env.VITE_SUPABASE_URL'] = JSON.stringify(resolvedUrl);
@@ -96,9 +106,8 @@ export default defineConfig(() => {
   if (resolvedAnonKey) {
     defineOverrides['import.meta.env.VITE_SUPABASE_ANON_KEY'] = JSON.stringify(resolvedAnonKey);
   }
-  if (resolvedAutoTable) {
-    defineOverrides['import.meta.env.VITE_SUPABASE_AUTO_TABLE'] = JSON.stringify(resolvedAutoTable);
-  }
+  defineOverrides['import.meta.env.VITE_SUPABASE_BRANDS_VIEW'] = JSON.stringify(resolvedBrandsView);
+  defineOverrides['import.meta.env.VITE_SUPABASE_AUTO_TABLE'] = JSON.stringify(resolvedAutoTable);
 
   return {
     define: defineOverrides,

@@ -17,11 +17,18 @@ const rawKey = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_ANON_KEY);
 const supabaseUrl = normalizeSupabaseUrl(rawUrl);
 const supabaseAnonKey = rawKey;
 
+const envBrandsView = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_BRANDS_VIEW);
+export const VEHICLES_BRANDS_VIEW: string =
+  envBrandsView && envBrandsView !== "auto" && envBrandsView !== "veichles"
+    ? envBrandsView
+    : "vehicles_marche";
+
 const envAutoTable = sanitizeEnvValue(import.meta.env.VITE_SUPABASE_AUTO_TABLE);
 export const AUTO_TABLE_NAME: string =
-  envAutoTable && envAutoTable !== "auto" ? envAutoTable : "vehicles";
+  envAutoTable && envAutoTable !== "auto" && envAutoTable !== "veichles"
+    ? envAutoTable
+    : "vehicles";
 
-export const VEHICLES_BRANDS_VIEW = "vehicles_marche";
 export const CATEGORIES_TABLE_NAME = "categorie_sito";
 
 const isPlaceholderUrl =
@@ -166,10 +173,10 @@ export function formatEngineOption(row: AutoTableRow): EngineOption | null {
 }
 
 /**
- * 1. Carica tutte le marche distinte:
- *    - Usa prima la vista veloce `public.vehicles_marche` (colonna `marca`, 1 singola query).
- *    - Se la vista non è disponibile o restituisce errore, esegue automaticamente il fallback
- *      paginato sulla tabella `public.vehicles` leggendo la colonna `"Marca"`.
+ * 1. Carica tutte le marche distinte per il menu Marche:
+ *    - FONTE PRINCIPALE: vista dedicata `public.vehicles_marche` (colonna `marca`).
+ *    - FALLBACK SICURO: tabella `public.vehicles` (colonna `"Marca"`) solo se
+ *      `vehicles_marche` restituisce un errore o risulta temporaneamente vuota/assente.
  */
 export async function fetchDistinctVehicleBrands(
   client: SupabaseClient | null = supabase
@@ -179,12 +186,12 @@ export async function fetchDistinctVehicleBrands(
     return [];
   }
 
-  // Tentativo 1: vista ottimizzata `public.vehicles_marche` (colonna `marca`)
+  // Fonte principale: `public.vehicles_marche` (colonna `marca`)
   const { data: viewData, error: viewError } = await client
     .from(VEHICLES_BRANDS_VIEW)
     .select("marca")
     .order("marca", { ascending: true })
-    .limit(1000);
+    .limit(2000);
 
   if (!viewError && Array.isArray(viewData) && viewData.length > 0) {
     const distinct = Array.from(
@@ -202,13 +209,17 @@ export async function fetchDistinctVehicleBrands(
     }
   } else if (viewError) {
     logSupabaseError(
-      "Caricamento marche (vista → fallback su public.vehicles)",
+      `Caricamento marche da "${VEHICLES_BRANDS_VIEW}" (attivo fallback su "${AUTO_TABLE_NAME}")`,
       VEHICLES_BRANDS_VIEW,
       viewError
     );
+  } else {
+    console.warn(
+      `[Supabase][fetchDistinctVehicleBrands] La vista "public.${VEHICLES_BRANDS_VIEW}" ha restituito 0 righe: attivo fallback su "public.${AUTO_TABLE_NAME}".`
+    );
   }
 
-  // Tentativo 2 (fallback): tabella `public.vehicles` leggendo `"Marca"` con doppi apici
+  // Fallback sicuro su `public.vehicles` solo in caso di errore o assenza di `vehicles_marche`
   const { count, error: countError } = await client
     .from(AUTO_TABLE_NAME)
     .select('"Marca"', { count: "exact", head: true });

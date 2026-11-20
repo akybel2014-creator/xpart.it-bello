@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CategorySelector } from "@/src/components/CategorySelector";
 import {
   AUTO_TABLE_NAME,
+  VEHICLES_BRANDS_VIEW,
   fetchDistinctVehicleBrands,
   fetchVehicleModels,
   fetchVehicleVersions,
@@ -371,7 +372,7 @@ export function VehicleSearchBox({
       } catch (err) {
         logSupabaseError(
           `VehicleSearchBox:loadMarche(${tipoVeicolo})`,
-          tipoVeicolo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          tipoVeicolo === "auto" ? VEHICLES_BRANDS_VIEW : "veicoli_sito",
           err
         );
         const fallback = Array.from(
