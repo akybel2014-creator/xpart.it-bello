@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import { AUTO_TABLE_FALLBACK } from "@/src/data/autoFallback";
 import {
   AUTO_TABLE_NAME,
+  fetchDistinctVehicleBrands,
+  fetchVehicleModels,
+  fetchVehicleVersions,
   formatEngineOption,
+  logSupabaseError,
   supabase,
-  type AutoTableRow,
   type EngineOption,
 } from "@/src/lib/supabaseClient";
 
@@ -26,140 +29,12 @@ interface UseVehicleCascadeResult {
 
 const isSet = (val: string) => Boolean(val && val !== "all");
 
-// Cache in memoria per evitare refetch ripetuti tra SearchBar e Modale Venditore
+// Cache in memoria per evitare refetch ripetuti tra Modale Venditore e altri form
 let cachedBrands: string[] | null = null;
 const cachedModelsByBrand = new Map<string, string[]>();
 const cachedEnginesByBrandModel = new Map<string, EngineOption[]>();
 
-const BRANDS_STORAGE_KEY = `clp_brands_cache_${AUTO_TABLE_NAME}`;
-
-async function fetchAllDistinctBrandsFromSupabase(): Promise<string[]> {
-  if (cachedBrands && cachedBrands.length > 0) return cachedBrands;
-
-  try {
-    const raw = sessionStorage.getItem(BRANDS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as string[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        cachedBrands = parsed;
-        return parsed;
-      }
-    }
-  } catch {
-    // sessionStorage non disponibile
-  }
-
-  if (!supabase) return [];
-
-  const { count, error: countError } = await supabase
-    .from(AUTO_TABLE_NAME)
-    .select("*", { count: "exact", head: true });
-
-  if (countError) throw countError;
-
-  const pageSize = 1000;
-  const totalPages = Math.max(1, Math.ceil((count ?? 0) / pageSize));
-  const brandSet = new Set<string>();
-
-  for (let i = 0; i < totalPages; i += 15) {
-    const batch = [];
-    for (let j = i; j < Math.min(i + 15, totalPages); j++) {
-      batch.push(
-        supabase
-          .from(AUTO_TABLE_NAME)
-          .select("Marca")
-          .range(j * pageSize, (j + 1) * pageSize - 1)
-      );
-    }
-    const results = await Promise.all(batch);
-    for (const res of results) {
-      if (res.error) throw res.error;
-      for (const row of (res.data as AutoTableRow[]) ?? []) {
-        const name = (row.Marca ?? row.marca)?.trim();
-        if (name) brandSet.add(name);
-      }
-    }
-  }
-
-  const sorted = Array.from(brandSet).sort((a, b) => a.localeCompare(b, "it"));
-  cachedBrands = sorted;
-
-  try {
-    sessionStorage.setItem(BRANDS_STORAGE_KEY, JSON.stringify(sorted));
-  } catch {
-    // ignore quota errors
-  }
-
-  return sorted;
-}
-
-async function fetchModelsForBrandFromSupabase(brand: string): Promise<string[]> {
-  const cached = cachedModelsByBrand.get(brand);
-  if (cached) return cached;
-  if (!supabase) return [];
-
-  const pageSize = 1000;
-  let offset = 0;
-  const modelSet = new Set<string>();
-
-  while (true) {
-    const { data, error } = await supabase
-      .from(AUTO_TABLE_NAME)
-      .select("Modello")
-      .eq("Marca", brand)
-      .order("Modello", { ascending: true })
-      .range(offset, offset + pageSize - 1);
-
-    if (error) throw error;
-
-    const rows = (data as AutoTableRow[]) ?? [];
-    for (const row of rows) {
-      const name = (row.Modello ?? row.modello)?.trim();
-      if (name) modelSet.add(name);
-    }
-
-    if (rows.length < pageSize) break;
-    offset += pageSize;
-  }
-
-  const sorted = Array.from(modelSet).sort((a, b) => a.localeCompare(b, "it"));
-  cachedModelsByBrand.set(brand, sorted);
-  return sorted;
-}
-
-async function fetchEnginesForModelFromSupabase(
-  brand: string,
-  model: string
-): Promise<EngineOption[]> {
-  const cacheKey = `${brand}::${model}`;
-  const cached = cachedEnginesByBrandModel.get(cacheKey);
-  if (cached) return cached;
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from(AUTO_TABLE_NAME)
-    .select("*")
-    .eq("Marca", brand)
-    .eq("Modello", model)
-    .order("Versione", { ascending: true })
-    .limit(1000);
-
-  if (error) throw error;
-
-  const deduped = new Map<string, EngineOption>();
-  for (const row of (data as AutoTableRow[]) ?? []) {
-    const formatted = formatEngineOption(row);
-    if (formatted && !deduped.has(formatted.value)) {
-      deduped.set(formatted.value, formatted);
-    }
-  }
-
-  const sorted = Array.from(deduped.values()).sort((a, b) =>
-    a.label.localeCompare(b.label, "it")
-  );
-  cachedEnginesByBrandModel.set(cacheKey, sorted);
-  return sorted;
-}
+const BRANDS_STORAGE_KEY = `clp_brands_v2_${AUTO_TABLE_NAME}`;
 
 export function useVehicleCascade({
   selectedBrand,
@@ -180,7 +55,7 @@ export function useVehicleCascade({
   const [loadingEngines, setLoadingEngines] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Carica tutte le marche distinte ordinate alfabeticamente all'avvio
+  // 1. Carica tutte le marche distinte (da `public.vehicles_marche` con fallback `public.vehicles`)
   useEffect(() => {
     if (cachedBrands && cachedBrands.length > 0) {
       setBrands(cachedBrands);
@@ -195,13 +70,34 @@ export function useVehicleCascade({
       setError(null);
 
       try {
-        if (supabase) {
-          const list = await fetchAllDistinctBrandsFromSupabase();
-          if (!cancelled) setBrands(list);
-          return;
+        try {
+          const raw = sessionStorage.getItem(BRANDS_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw) as string[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              cachedBrands = parsed;
+              if (!cancelled) setBrands(parsed);
+              return;
+            }
+          }
+        } catch {
+          // sessionStorage non disponibile
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 180));
+        if (supabase) {
+          const list = await fetchDistinctVehicleBrands(supabase);
+          if (list.length > 0) {
+            cachedBrands = list;
+            try {
+              sessionStorage.setItem(BRANDS_STORAGE_KEY, JSON.stringify(list));
+            } catch {
+              // ignore quota errors
+            }
+            if (!cancelled) setBrands(list);
+            return;
+          }
+        }
+
         const distinct = Array.from(
           new Set(
             AUTO_TABLE_FALLBACK.map((r) => (r.Marca ?? r.marca)?.trim()).filter(
@@ -210,9 +106,9 @@ export function useVehicleCascade({
           )
         ).sort((a, b) => a.localeCompare(b, "it"));
 
-        cachedBrands = distinct;
         if (!cancelled) setBrands(distinct);
       } catch (err) {
+        logSupabaseError("useVehicleCascade:loadBrands", AUTO_TABLE_NAME, err);
         if (!cancelled) {
           setError(
             err instanceof Error
@@ -239,7 +135,7 @@ export function useVehicleCascade({
     };
   }, []);
 
-  // 2. Carica modelli della marca selezionata
+  // 2. Carica modelli della marca selezionata da `public.vehicles`
   useEffect(() => {
     if (!isSet(selectedBrand)) {
       setModels([]);
@@ -262,12 +158,14 @@ export function useVehicleCascade({
 
       try {
         if (supabase) {
-          const list = await fetchModelsForBrandFromSupabase(selectedBrand);
-          if (!cancelled) setModels(list);
-          return;
+          const list = await fetchVehicleModels(selectedBrand, supabase);
+          if (list.length > 0) {
+            cachedModelsByBrand.set(selectedBrand, list);
+            if (!cancelled) setModels(list);
+            return;
+          }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 180));
         const distinct = Array.from(
           new Set(
             AUTO_TABLE_FALLBACK.filter(
@@ -280,7 +178,8 @@ export function useVehicleCascade({
         ).sort((a, b) => a.localeCompare(b, "it"));
 
         if (!cancelled) setModels(distinct);
-      } catch {
+      } catch (err) {
+        logSupabaseError("useVehicleCascade:loadModels", AUTO_TABLE_NAME, err);
         if (!cancelled) {
           const fallbackModels = Array.from(
             new Set(
@@ -305,7 +204,7 @@ export function useVehicleCascade({
     };
   }, [selectedBrand]);
 
-  // 3. Carica motorizzazioni / versioni per Marca + Modello selezionati
+  // 3. Carica motorizzazioni / versioni per Marca + Modello da `public.vehicles`
   useEffect(() => {
     if (!isSet(selectedBrand) || !isSet(selectedModel)) {
       setEngines([]);
@@ -329,15 +228,23 @@ export function useVehicleCascade({
 
       try {
         if (supabase) {
-          const list = await fetchEnginesForModelFromSupabase(
+          const versions = await fetchVehicleVersions(
             selectedBrand,
-            selectedModel
+            selectedModel,
+            supabase
           );
-          if (!cancelled) setEngines(list);
-          return;
+          if (versions.length > 0) {
+            const mapped: EngineOption[] = versions.map((v) => ({
+              value: v.versione,
+              label: v.versione,
+              code: v.id,
+            }));
+            cachedEnginesByBrandModel.set(cacheKey, mapped);
+            if (!cancelled) setEngines(mapped);
+            return;
+          }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 180));
         const rows = AUTO_TABLE_FALLBACK.filter(
           (r) =>
             (r.Marca ?? r.marca)?.toLowerCase() === selectedBrand.toLowerCase() &&
@@ -355,7 +262,8 @@ export function useVehicleCascade({
           a.label.localeCompare(b.label, "it")
         );
         if (!cancelled) setEngines(sorted);
-      } catch {
+      } catch (err) {
+        logSupabaseError("useVehicleCascade:loadEngines", AUTO_TABLE_NAME, err);
         if (!cancelled) setEngines([]);
       } finally {
         if (!cancelled) setLoadingEngines(false);

@@ -13,7 +13,10 @@ import type { CategoriaSito } from "@/src/components/CategorySelector";
 import { CheckoutSummary } from "@/src/components/CheckoutSummary";
 import { Footer } from "@/src/components/Footer";
 import { Header, type PortalView } from "@/src/components/Header";
-import { OemCatalogResults } from "@/src/components/OemCatalogResults";
+import {
+  OemCatalogResults,
+  type GroupedOemCatalogCard,
+} from "@/src/components/OemCatalogResults";
 import { ProductDetailModal } from "@/src/components/ProductDetailModal";
 import { QuoteModal, SellPartModal } from "@/src/components/QuoteAndSellModals";
 import { SearchBar, type SearchModuleTab } from "@/src/components/SearchBar";
@@ -422,6 +425,32 @@ function AppShell() {
     />
   );
 
+  const handleFindCompatiblePartsFromOem = (card: GroupedOemCatalogCard) => {
+    const cleanOem = card.oemCode && card.oemCode !== "—" ? card.oemCode : oemCatalogSearch.normalizedQuery;
+    setSearchQuery(cleanOem);
+    if (card.carBrand) {
+      setSelectedBrand(card.carBrand);
+    }
+    setActiveSearchTab("ricambi");
+    setActiveTyreSearch(null);
+    if (location.pathname !== "/catalogo" && location.pathname !== "/ricerca") {
+      navigate("/catalogo");
+    }
+    window.setTimeout(() => {
+      document
+        .getElementById("catalogo-ricambi")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  };
+
+  const handleRequestAvailabilityFromOem = (card: GroupedOemCatalogCard) => {
+    const params = new URLSearchParams();
+    if (card.oemCode && card.oemCode !== "—") params.set("oem", card.oemCode);
+    if (card.carBrand) params.set("marca", card.carBrand);
+    if (card.carModel) params.set("modello", card.carModel);
+    navigate(`/contatti?${params.toString()}`);
+  };
+
   const sharedOemResults = (
     <OemCatalogResults
       results={oemCatalogSearch.results}
@@ -438,6 +467,8 @@ function AppShell() {
         setSearchQuery("");
         oemCatalogSearch.clearResults();
       }}
+      onFindCompatibleParts={handleFindCompatiblePartsFromOem}
+      onRequestAvailability={handleRequestAvailabilityFromOem}
     />
   );
 

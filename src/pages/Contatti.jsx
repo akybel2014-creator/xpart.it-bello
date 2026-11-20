@@ -7,7 +7,8 @@ import {
   Phone,
   Send,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageLayout } from "@/src/pages/PageLayout";
 
@@ -17,12 +18,29 @@ import { PageLayout } from "@/src/pages/PageLayout";
  * e recapiti operativi di supporto.
  */
 export function Contatti() {
+  const [searchParams] = useSearchParams();
   const [nome, setNome] = useState("");
   const [ragioneSociale, setRagioneSociale] = useState("");
   const [email, setEmail] = useState("");
   const [oggetto, setOggetto] = useState("Supporto ordine / compatibilità OEM");
   const [messaggio, setMessaggio] = useState("");
   const [submitted, setSubmitted] = useState(false);
+
+  // Precompila il messaggio quando si arriva dal pulsante "Richiedi disponibilità" di una card OEM
+  useEffect(() => {
+    const oem = searchParams.get("oem");
+    const marca = searchParams.get("marca");
+    const modello = searchParams.get("modello");
+    if (!oem) return;
+
+    const veicolo = [marca, modello].filter(Boolean).join(" ");
+    setOggetto("Supporto ordine / compatibilità OEM");
+    setMessaggio(
+      `Buongiorno, desidero verificare disponibilità, prezzo B2B e tempi di spedizione per il ricambio con codice OEM ${oem}${
+        veicolo ? ` compatibile con ${veicolo}` : ""
+      }.`
+    );
+  }, [searchParams]);
 
   const handleSubmit = (e) => {
     e.preventDefault();

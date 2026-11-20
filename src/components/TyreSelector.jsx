@@ -13,7 +13,14 @@ import {
   Truck,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { supabase as defaultSupabase } from "@/src/lib/supabaseClient";
+import {
+  AUTO_TABLE_NAME,
+  fetchDistinctVehicleBrands,
+  fetchVehicleModels,
+  fetchVehicleVersions,
+  logSupabaseError,
+  supabase as defaultSupabase,
+} from "@/src/lib/supabaseClient";
 
 /**
  * Tipologie veicolo per il selettore Pneumatici.
@@ -240,7 +247,7 @@ export function TyreSelector({
     }
   };
 
-  // Carica marche veicolo da `public.veicoli_sito` quando l'utente usa la modalità "Per veicolo"
+  // Carica marche veicolo (`public.vehicles_marche` -> `public.vehicles` per Auto/SUV/Furgone)
   useEffect(() => {
     if (modalita !== "veicolo") return;
     let cancelled = false;
@@ -249,21 +256,33 @@ export function TyreSelector({
       setLoadingVeicoli(true);
       try {
         if (supabaseClient) {
-          const { data, error } = await supabaseClient
-            .from("veicoli_sito")
-            .select("marca")
-            .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
-            .eq("attivo", true)
-            .order("marca", { ascending: true })
-            .limit(1000);
-
-          if (!error && Array.isArray(data) && data.length > 0) {
-            const distinct = Array.from(
-              new Set(data.map((r) => r.marca?.trim()).filter(Boolean))
-            ).sort((a, b) => a.localeCompare(b, "it"));
-            if (!cancelled) {
-              setListaMarcheVeicolo(distinct);
+          if (activeTabMeta.supabaseTipo === "auto") {
+            const liveBrands = await fetchDistinctVehicleBrands(supabaseClient);
+            if (liveBrands.length > 0) {
+              if (!cancelled) setListaMarcheVeicolo(liveBrands);
               return;
+            }
+          } else {
+            const { data, error } = await supabaseClient
+              .from("veicoli_sito")
+              .select("marca")
+              .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
+              .eq("attivo", true)
+              .order("marca", { ascending: true })
+              .limit(1000);
+
+            if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+              logSupabaseError("TyreSelector:marche", "veicoli_sito", error);
+            }
+
+            if (!error && Array.isArray(data) && data.length > 0) {
+              const distinct = Array.from(
+                new Set(data.map((r) => r.marca?.trim()).filter(Boolean))
+              ).sort((a, b) => a.localeCompare(b, "it"));
+              if (!cancelled) {
+                setListaMarcheVeicolo(distinct);
+                return;
+              }
             }
           }
         }
@@ -276,7 +295,12 @@ export function TyreSelector({
           )
         ).sort((a, b) => a.localeCompare(b, "it"));
         if (!cancelled) setListaMarcheVeicolo(fb);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          "TyreSelector:loadVehicleBrands",
+          activeTabMeta.supabaseTipo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         const fb = Array.from(
           new Set(
             FALLBACK_VEHICLES.filter(
@@ -307,22 +331,34 @@ export function TyreSelector({
     async function loadVehicleModels() {
       try {
         if (supabaseClient) {
-          const { data, error } = await supabaseClient
-            .from("veicoli_sito")
-            .select("modello")
-            .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
-            .eq("marca", marcaVeicolo)
-            .eq("attivo", true)
-            .order("modello", { ascending: true })
-            .limit(500);
-
-          if (!error && Array.isArray(data) && data.length > 0) {
-            const distinct = Array.from(
-              new Set(data.map((r) => r.modello?.trim()).filter(Boolean))
-            ).sort((a, b) => a.localeCompare(b, "it"));
-            if (!cancelled) {
-              setListaModelliVeicolo(distinct);
+          if (activeTabMeta.supabaseTipo === "auto") {
+            const liveModels = await fetchVehicleModels(marcaVeicolo, supabaseClient);
+            if (liveModels.length > 0) {
+              if (!cancelled) setListaModelliVeicolo(liveModels);
               return;
+            }
+          } else {
+            const { data, error } = await supabaseClient
+              .from("veicoli_sito")
+              .select("modello")
+              .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
+              .eq("marca", marcaVeicolo)
+              .eq("attivo", true)
+              .order("modello", { ascending: true })
+              .limit(500);
+
+            if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+              logSupabaseError("TyreSelector:modelli", "veicoli_sito", error);
+            }
+
+            if (!error && Array.isArray(data) && data.length > 0) {
+              const distinct = Array.from(
+                new Set(data.map((r) => r.modello?.trim()).filter(Boolean))
+              ).sort((a, b) => a.localeCompare(b, "it"));
+              if (!cancelled) {
+                setListaModelliVeicolo(distinct);
+                return;
+              }
             }
           }
         }
@@ -337,7 +373,12 @@ export function TyreSelector({
           )
         );
         if (!cancelled) setListaModelliVeicolo(fb);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          "TyreSelector:loadVehicleModels",
+          activeTabMeta.supabaseTipo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         if (!cancelled) setListaModelliVeicolo([]);
       }
     }
@@ -348,7 +389,7 @@ export function TyreSelector({
     };
   }, [modalita, activeTabMeta.supabaseTipo, marcaVeicolo, supabaseClient]);
 
-  // Carica motorizzazioni per marca + modello in modalità "Per veicolo"
+  // Carica motorizzazioni / versioni per marca + modello in modalità "Per veicolo"
   useEffect(() => {
     if (modalita !== "veicolo" || !marcaVeicolo || !modelloVeicolo) {
       setListaMotoriVeicolo([]);
@@ -359,23 +400,41 @@ export function TyreSelector({
     async function loadVehicleEngines() {
       try {
         if (supabaseClient) {
-          const { data, error } = await supabaseClient
-            .from("veicoli_sito")
-            .select("motorizzazione")
-            .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
-            .eq("marca", marcaVeicolo)
-            .eq("modello", modelloVeicolo)
-            .eq("attivo", true)
-            .order("motorizzazione", { ascending: true })
-            .limit(300);
-
-          if (!error && Array.isArray(data) && data.length > 0) {
-            const distinct = Array.from(
-              new Set(data.map((r) => r.motorizzazione?.trim()).filter(Boolean))
+          if (activeTabMeta.supabaseTipo === "auto") {
+            const versions = await fetchVehicleVersions(
+              marcaVeicolo,
+              modelloVeicolo,
+              supabaseClient
             );
-            if (!cancelled) {
-              setListaMotoriVeicolo(distinct);
+            if (versions.length > 0) {
+              if (!cancelled) {
+                setListaMotoriVeicolo(versions.map((v) => v.versione));
+              }
               return;
+            }
+          } else {
+            const { data, error } = await supabaseClient
+              .from("veicoli_sito")
+              .select("motorizzazione")
+              .eq("tipo_veicolo", activeTabMeta.supabaseTipo)
+              .eq("marca", marcaVeicolo)
+              .eq("modello", modelloVeicolo)
+              .eq("attivo", true)
+              .order("motorizzazione", { ascending: true })
+              .limit(300);
+
+            if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+              logSupabaseError("TyreSelector:versioni", "veicoli_sito", error);
+            }
+
+            if (!error && Array.isArray(data) && data.length > 0) {
+              const distinct = Array.from(
+                new Set(data.map((r) => r.motorizzazione?.trim()).filter(Boolean))
+              );
+              if (!cancelled) {
+                setListaMotoriVeicolo(distinct);
+                return;
+              }
             }
           }
         }
@@ -387,7 +446,12 @@ export function TyreSelector({
             v.modello.toLowerCase() === modelloVeicolo.toLowerCase()
         ).map((v) => v.motorizzazione);
         if (!cancelled) setListaMotoriVeicolo(fb);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          "TyreSelector:loadVehicleEngines",
+          activeTabMeta.supabaseTipo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         if (!cancelled) setListaMotoriVeicolo([]);
       }
     }

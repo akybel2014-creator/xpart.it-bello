@@ -10,7 +10,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CategorySelector } from "@/src/components/CategorySelector";
-import { supabase as defaultSupabase } from "@/src/lib/supabaseClient";
+import {
+  AUTO_TABLE_NAME,
+  fetchDistinctVehicleBrands,
+  fetchVehicleModels,
+  fetchVehicleVersions,
+  logSupabaseError,
+  supabase as defaultSupabase,
+} from "@/src/lib/supabaseClient";
 import { normalizeOemCode } from "@/src/services/oemCatalogService";
 
 /**
@@ -268,7 +275,8 @@ export function VehicleSearchBox({
   );
 
   // ---------------------------------------------------------------------------
-  // 1. FETCH MARCHE DISTINTE (`public.veicoli_sito`) per `tipo_veicolo` attivo
+  // 1. FETCH MARCHE DISTINTE (`public.vehicles_marche` -> `public.vehicles` per Auto,
+  //    `public.veicoli_sito` per Moto/Camion)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
@@ -285,13 +293,30 @@ export function VehicleSearchBox({
       setMarche([]);
 
       try {
-        if (supabaseClient) {
+        if (!supabaseClient) {
+          console.warn(
+            "[Supabase][VehicleSearchBox] Client Supabase non configurato: uso elenco veicoli locale di fallback."
+          );
+        } else if (tipoVeicolo === "auto") {
+          // Usa la vista ottimizzata `public.vehicles_marche` (1 query) con fallback automatico su `public.vehicles`
+          const liveBrands = await fetchDistinctVehicleBrands(supabaseClient);
+          if (liveBrands.length > 0) {
+            cacheMarche.set(tipoVeicolo, liveBrands);
+            if (!cancelled) setMarche(liveBrands);
+            return;
+          }
+        } else {
+          // Moto & Camion: interroga `public.veicoli_sito` se disponibile
           const { data: probeData, error: probeError } = await supabaseClient
             .from("veicoli_sito")
             .select("marca")
             .eq("tipo_veicolo", tipoVeicolo)
             .eq("attivo", true)
             .limit(1);
+
+          if (probeError && probeError.code !== "PGRST205" && probeError.code !== "42P01") {
+            logSupabaseError(`VehicleSearchBox:marche(${tipoVeicolo})`, "veicoli_sito", probeError);
+          }
 
           if (!probeError && Array.isArray(probeData) && probeData.length > 0) {
             const brandSet = new Set();
@@ -307,7 +332,10 @@ export function VehicleSearchBox({
                 .order("marca", { ascending: true })
                 .range(offset, offset + pageSize - 1);
 
-              if (error) throw error;
+              if (error) {
+                logSupabaseError(`VehicleSearchBox:marche(${tipoVeicolo})`, "veicoli_sito", error);
+                throw error;
+              }
 
               const rows = data ?? [];
               for (const row of rows) {
@@ -328,51 +356,9 @@ export function VehicleSearchBox({
               return;
             }
           }
-
-          // Fallback live alla tabella `public.vehicles` esistente per il tab Auto
-          if (tipoVeicolo === "auto") {
-            const { count, error: countErr } = await supabaseClient
-              .from("vehicles")
-              .select("*", { count: "exact", head: true });
-
-            if (!countErr && (count ?? 0) > 0) {
-              const pageSize = 1000;
-              const totalPages = Math.max(1, Math.ceil((count ?? 0) / pageSize));
-              const brandSet = new Set();
-
-              for (let i = 0; i < totalPages; i += 15) {
-                const batch = [];
-                for (let j = i; j < Math.min(i + 15, totalPages); j++) {
-                  batch.push(
-                    supabaseClient
-                      .from("vehicles")
-                      .select("Marca")
-                      .range(j * pageSize, (j + 1) * pageSize - 1)
-                  );
-                }
-                const results = await Promise.all(batch);
-                for (const res of results) {
-                  if (res.error) throw res.error;
-                  for (const row of res.data ?? []) {
-                    const name = row.Marca?.trim();
-                    if (name) brandSet.add(name);
-                  }
-                }
-              }
-
-              if (brandSet.size > 0) {
-                const sorted = Array.from(brandSet).sort((a, b) =>
-                  a.localeCompare(b, "it")
-                );
-                cacheMarche.set(tipoVeicolo, sorted);
-                if (!cancelled) setMarche(sorted);
-                return;
-              }
-            }
-          }
         }
 
-        // Fallback pulito se Supabase non è configurato o la tabella è vuota
+        // Fallback pulito se Supabase non è configurato o la tabella per moto/camion non esiste ancora
         const fallback = Array.from(
           new Set(
             FALLBACK_VEICOLI_SITO.filter(
@@ -382,7 +368,12 @@ export function VehicleSearchBox({
         ).sort((a, b) => a.localeCompare(b, "it"));
 
         if (!cancelled) setMarche(fallback);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          `VehicleSearchBox:loadMarche(${tipoVeicolo})`,
+          tipoVeicolo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         const fallback = Array.from(
           new Set(
             FALLBACK_VEICOLI_SITO.filter(
@@ -403,7 +394,7 @@ export function VehicleSearchBox({
   }, [tipoVeicolo, supabaseClient]);
 
   // ---------------------------------------------------------------------------
-  // 2. FETCH MODELLI DISTINTI (`public.veicoli_sito`) per `tipo_veicolo` + `marca`
+  // 2. FETCH MODELLI DISTINTI (`public.vehicles` per Auto, `public.veicoli_sito` per Moto/Camion)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!marca) {
@@ -428,80 +419,64 @@ export function VehicleSearchBox({
 
       try {
         if (supabaseClient) {
-          const { data: probeModel, error: probeModelErr } = await supabaseClient
-            .from("veicoli_sito")
-            .select("modello")
-            .eq("tipo_veicolo", tipoVeicolo)
-            .eq("marca", marca)
-            .eq("attivo", true)
-            .limit(1);
-
-          if (!probeModelErr && Array.isArray(probeModel) && probeModel.length > 0) {
-            const modelSet = new Set();
-            const pageSize = 1000;
-            let offset = 0;
-
-            while (true) {
-              const { data, error } = await supabaseClient
-                .from("veicoli_sito")
-                .select("modello")
-                .eq("tipo_veicolo", tipoVeicolo)
-                .eq("marca", marca)
-                .eq("attivo", true)
-                .order("modello", { ascending: true })
-                .range(offset, offset + pageSize - 1);
-
-              if (error) throw error;
-
-              const rows = data ?? [];
-              for (const row of rows) {
-                const name = row.modello?.trim();
-                if (name) modelSet.add(name);
-              }
-
-              if (rows.length < pageSize) break;
-              offset += pageSize;
-            }
-
-            if (modelSet.size > 0) {
-              const sorted = Array.from(modelSet).sort((a, b) =>
-                a.localeCompare(b, "it")
-              );
-              cacheModelli.set(cacheKey, sorted);
-              if (!cancelled) setModelli(sorted);
-              return;
-            }
-          }
-
           if (tipoVeicolo === "auto") {
-            const modelSet = new Set();
-            const pageSize = 1000;
-            let offset = 0;
-            while (true) {
-              const { data, error } = await supabaseClient
-                .from("vehicles")
-                .select("Modello")
-                .eq("Marca", marca)
-                .order("Modello", { ascending: true })
-                .range(offset, offset + pageSize - 1);
+            const liveModels = await fetchVehicleModels(marca, supabaseClient);
+            if (liveModels.length > 0) {
+              cacheModelli.set(cacheKey, liveModels);
+              if (!cancelled) setModelli(liveModels);
+              return;
+            }
+          } else {
+            const { data: probeModel, error: probeModelErr } = await supabaseClient
+              .from("veicoli_sito")
+              .select("modello")
+              .eq("tipo_veicolo", tipoVeicolo)
+              .eq("marca", marca)
+              .eq("attivo", true)
+              .limit(1);
 
-              if (error) throw error;
-              const rows = data ?? [];
-              for (const row of rows) {
-                const name = row.Modello?.trim();
-                if (name) modelSet.add(name);
-              }
-              if (rows.length < pageSize) break;
-              offset += pageSize;
+            if (probeModelErr && probeModelErr.code !== "PGRST205" && probeModelErr.code !== "42P01") {
+              logSupabaseError(`VehicleSearchBox:modelli(${tipoVeicolo})`, "veicoli_sito", probeModelErr);
             }
 
-            if (modelSet.size > 0) {
-              const sorted = Array.from(modelSet).sort((a, b) =>
-                a.localeCompare(b, "it")
-              );
-              cacheModelli.set(cacheKey, sorted);
-              if (!cancelled) setModelli(sorted);
-              return;
+            if (!probeModelErr && Array.isArray(probeModel) && probeModel.length > 0) {
+              const modelSet = new Set();
+              const pageSize = 1000;
+              let offset = 0;
+
+              while (true) {
+                const { data, error } = await supabaseClient
+                  .from("veicoli_sito")
+                  .select("modello")
+                  .eq("tipo_veicolo", tipoVeicolo)
+                  .eq("marca", marca)
+                  .eq("attivo", true)
+                  .order("modello", { ascending: true })
+                  .range(offset, offset + pageSize - 1);
+
+                if (error) {
+                  logSupabaseError(`VehicleSearchBox:modelli(${tipoVeicolo})`, "veicoli_sito", error);
+                  throw error;
+                }
+
+                const rows = data ?? [];
+                for (const row of rows) {
+                  const name = row.modello?.trim();
+                  if (name) modelSet.add(name);
+                }
+
+                if (rows.length < pageSize) break;
+                offset += pageSize;
+              }
+
+              if (modelSet.size > 0) {
+                const sorted = Array.from(modelSet).sort((a, b) =>
+                  a.localeCompare(b, "it")
+                );
+                cacheModelli.set(cacheKey, sorted);
+                if (!cancelled) setModelli(sorted);
+                return;
+              }
             }
           }
         }
@@ -517,7 +492,12 @@ export function VehicleSearchBox({
         ).sort((a, b) => a.localeCompare(b, "it"));
 
         if (!cancelled) setModelli(fallback);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          `VehicleSearchBox:loadModelli(${tipoVeicolo}, ${marca})`,
+          tipoVeicolo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         const fallback = Array.from(
           new Set(
             FALLBACK_VEICOLI_SITO.filter(
@@ -540,7 +520,7 @@ export function VehicleSearchBox({
   }, [tipoVeicolo, marca, supabaseClient]);
 
   // ---------------------------------------------------------------------------
-  // 3. FETCH MOTORIZZAZIONI / VERSIONI (`id`, `motorizzazione`) per Marca + Modello
+  // 3. FETCH MOTORIZZAZIONI / VERSIONI (`public.vehicles` per Auto, `public.veicoli_sito` per Moto/Camion)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!marca || !modello) {
@@ -565,52 +545,41 @@ export function VehicleSearchBox({
 
       try {
         if (supabaseClient) {
-          const { data, error } = await supabaseClient
-            .from("veicoli_sito")
-            .select("id, motorizzazione")
-            .eq("tipo_veicolo", tipoVeicolo)
-            .eq("marca", marca)
-            .eq("modello", modello)
-            .eq("attivo", true)
-            .order("motorizzazione", { ascending: true })
-            .limit(500);
-
-          if (!error && Array.isArray(data) && data.length > 0) {
-            const deduped = new Map();
-            for (const row of data) {
-              const label = row.motorizzazione?.trim();
-              if (label && !deduped.has(label)) {
-                deduped.set(label, { id: row.id, motorizzazione: label });
-              }
-            }
-
-            if (deduped.size > 0) {
-              const sorted = Array.from(deduped.values()).sort((a, b) =>
-                a.motorizzazione.localeCompare(b.motorizzazione, "it")
-              );
-              cacheMotorizzazioni.set(cacheKey, sorted);
-              if (!cancelled) setMotorizzazioni(sorted);
+          if (tipoVeicolo === "auto") {
+            const versions = await fetchVehicleVersions(marca, modello, supabaseClient);
+            if (versions.length > 0) {
+              const mapped = versions.map((v) => ({
+                id: v.id,
+                motorizzazione: v.versione,
+              }));
+              cacheMotorizzazioni.set(cacheKey, mapped);
+              if (!cancelled) setMotorizzazioni(mapped);
               return;
             }
-          }
-
-          if (tipoVeicolo === "auto") {
-            const { data: vehData, error: vehErr } = await supabaseClient
-              .from("vehicles")
-              .select("id, Versione")
-              .eq("Marca", marca)
-              .eq("Modello", modello)
-              .order("Versione", { ascending: true })
+          } else {
+            const { data, error } = await supabaseClient
+              .from("veicoli_sito")
+              .select("id, motorizzazione")
+              .eq("tipo_veicolo", tipoVeicolo)
+              .eq("marca", marca)
+              .eq("modello", modello)
+              .eq("attivo", true)
+              .order("motorizzazione", { ascending: true })
               .limit(500);
 
-            if (!vehErr && Array.isArray(vehData) && vehData.length > 0) {
+            if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+              logSupabaseError(`VehicleSearchBox:motorizzazioni(${tipoVeicolo})`, "veicoli_sito", error);
+            }
+
+            if (!error && Array.isArray(data) && data.length > 0) {
               const deduped = new Map();
-              for (const row of vehData) {
-                const label = row.Versione?.trim();
+              for (const row of data) {
+                const label = row.motorizzazione?.trim();
                 if (label && !deduped.has(label)) {
-                  deduped.set(label, { id: String(row.id), motorizzazione: label });
+                  deduped.set(label, { id: row.id, motorizzazione: label });
                 }
               }
+
               if (deduped.size > 0) {
                 const sorted = Array.from(deduped.values()).sort((a, b) =>
                   a.motorizzazione.localeCompare(b.motorizzazione, "it")
@@ -631,7 +600,12 @@ export function VehicleSearchBox({
         ).map((v) => ({ id: v.id, motorizzazione: v.motorizzazione }));
 
         if (!cancelled) setMotorizzazioni(fallback);
-      } catch {
+      } catch (err) {
+        logSupabaseError(
+          `VehicleSearchBox:loadMotorizzazioni(${tipoVeicolo}, ${marca}, ${modello})`,
+          tipoVeicolo === "auto" ? AUTO_TABLE_NAME : "veicoli_sito",
+          err
+        );
         const fallback = FALLBACK_VEICOLI_SITO.filter(
           (v) =>
             v.tipo_veicolo === tipoVeicolo &&

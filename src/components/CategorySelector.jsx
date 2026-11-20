@@ -1,6 +1,10 @@
 import { AlertCircle, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { supabase as defaultSupabase } from "@/src/lib/supabaseClient";
+import {
+  CATEGORIES_TABLE_NAME,
+  logSupabaseError,
+  supabase as defaultSupabase,
+} from "@/src/lib/supabaseClient";
 
 /**
  * Cache leggera in memoria per evitare chiamate duplicate a `public.categorie_sito`
@@ -64,6 +68,10 @@ export async function salvaRicambioSuSupabase(
     .select()
     .single();
 
+  if (error) {
+    logSupabaseError("salvaRicambioSuSupabase", "parts", error);
+  }
+
   return { data, error };
 }
 
@@ -123,6 +131,9 @@ export function CategorySelector({
       }
 
       if (!supabaseClient) {
+        console.error(
+          "[Supabase][CategorySelector] Client Supabase non configurato: impossibile leggere public.categorie_sito."
+        );
         setErrorMessage("Connessione Supabase non configurata.");
         setLoading(false);
         return;
@@ -134,32 +145,45 @@ export function CategorySelector({
       try {
         const [macroRes, subRes] = await Promise.all([
           supabaseClient
-            .from("categorie_sito")
+            .from(CATEGORIES_TABLE_NAME)
             .select("id, nome, slug, macro_gruppo, livello, attiva")
             .eq("livello", 1)
             .eq("attiva", true)
             .order("nome", { ascending: true }),
           supabaseClient
-            .from("categorie_sito")
+            .from(CATEGORIES_TABLE_NAME)
             .select("id, nome, slug, macro_gruppo, livello, attiva")
             .eq("livello", 2)
             .eq("attiva", true)
             .order("nome", { ascending: true }),
         ]);
 
-        if (macroRes.error) throw macroRes.error;
-        if (subRes.error) throw subRes.error;
+        if (macroRes.error) {
+          logSupabaseError("CategorySelector:macro(livello=1)", CATEGORIES_TABLE_NAME, macroRes.error);
+          throw macroRes.error;
+        }
+        if (subRes.error) {
+          logSupabaseError("CategorySelector:sub(livello=2)", CATEGORIES_TABLE_NAME, subRes.error);
+          throw subRes.error;
+        }
 
         const macroData = macroRes.data ?? [];
         const subData = subRes.data ?? [];
 
-        if (supabaseClient === defaultSupabase) {
+        if (macroData.length === 0) {
+          console.warn(
+            `[Supabase][CategorySelector] Nessuna macro-categoria restituita da "public.${CATEGORIES_TABLE_NAME}" (livello=1, attiva=true). Verifica RLS o dati in tabella.`
+          );
+        }
+
+        if (supabaseClient === defaultSupabase && macroData.length > 0) {
           categorieCache = { macro: macroData, sub: subData };
         }
 
         setMacroCategorie(macroData);
         setTutteSottocategorie(subData);
       } catch (err) {
+        logSupabaseError("CategorySelector:caricaCategorie", CATEGORIES_TABLE_NAME, err);
         const messaggio =
           err instanceof Error
             ? err.message

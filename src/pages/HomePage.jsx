@@ -15,7 +15,11 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase as defaultSupabase } from "@/src/lib/supabaseClient";
+import {
+  CATEGORIES_TABLE_NAME,
+  logSupabaseError,
+  supabase as defaultSupabase,
+} from "@/src/lib/supabaseClient";
 
 /**
  * Fallback sobrio per le macro-categorie nel caso in cui `public.categorie_sito`
@@ -141,22 +145,39 @@ export function HomePage({
     async function fetchMacroCategories() {
       setLoadingCategories(true);
       try {
-        if (supabaseClient) {
-          const { data, error } = await supabaseClient
-            .from("categorie_sito")
-            .select("id, nome, slug, macro_gruppo")
-            .eq("livello", 1)
-            .eq("attiva", true)
-            .order("nome", { ascending: true })
-            .limit(8);
-
-          if (!error && Array.isArray(data) && data.length > 0) {
-            if (!cancelled) setMacroCategories(data);
-            return;
-          }
+        if (!supabaseClient) {
+          console.warn(
+            "[Supabase][HomePage] Client Supabase non configurato: uso categorie locali di fallback."
+          );
+          if (!cancelled) setMacroCategories(FALLBACK_MACRO_CATEGORIE);
+          return;
         }
+
+        const { data, error } = await supabaseClient
+          .from(CATEGORIES_TABLE_NAME)
+          .select("id, nome, slug, macro_gruppo, livello, attiva")
+          .eq("livello", 1)
+          .eq("attiva", true)
+          .order("nome", { ascending: true })
+          .limit(8);
+
+        if (error) {
+          logSupabaseError("HomePage:macroCategories", CATEGORIES_TABLE_NAME, error);
+          if (!cancelled) setMacroCategories(FALLBACK_MACRO_CATEGORIE);
+          return;
+        }
+
+        if (Array.isArray(data) && data.length > 0) {
+          if (!cancelled) setMacroCategories(data);
+          return;
+        }
+
+        console.warn(
+          `[Supabase][HomePage] Nessuna categoria restituita da "public.${CATEGORIES_TABLE_NAME}" (livello=1, attiva=true). Verifica RLS o dati in tabella.`
+        );
         if (!cancelled) setMacroCategories(FALLBACK_MACRO_CATEGORIE);
-      } catch {
+      } catch (err) {
+        logSupabaseError("HomePage:macroCategories", CATEGORIES_TABLE_NAME, err);
         if (!cancelled) setMacroCategories(FALLBACK_MACRO_CATEGORIE);
       } finally {
         if (!cancelled) setLoadingCategories(false);
@@ -175,6 +196,9 @@ export function HomePage({
 
     async function fetchLatestParts() {
       if (!supabaseClient) {
+        console.warn(
+          "[Supabase][HomePage] Client Supabase non configurato: impossibile caricare public.parts."
+        );
         setLatestParts([]);
         setLoadingParts(false);
         return;
@@ -189,11 +213,16 @@ export function HomePage({
           .limit(8);
 
         if (error) {
-          // Se la tabella non ha `created_at` o restituisce errore, ritenta senza ordinamento
+          logSupabaseError("HomePage:latestParts", "parts", error);
+          // Se la tabella non ha `created_at` o restituisce errore di ordinamento, ritenta senza order
           const fallbackRes = await supabaseClient
             .from("parts")
             .select("*")
             .limit(8);
+
+          if (fallbackRes.error) {
+            logSupabaseError("HomePage:latestParts(fallback)", "parts", fallbackRes.error);
+          }
 
           if (!cancelled) {
             setLatestParts(
@@ -210,7 +239,8 @@ export function HomePage({
             Array.isArray(data) ? data.map(mapSupabasePartRow) : []
           );
         }
-      } catch {
+      } catch (err) {
+        logSupabaseError("HomePage:latestParts", "parts", err);
         if (!cancelled) setLatestParts([]);
       } finally {
         if (!cancelled) setLoadingParts(false);
