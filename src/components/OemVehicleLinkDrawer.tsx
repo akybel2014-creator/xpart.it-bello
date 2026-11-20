@@ -31,8 +31,13 @@ import {
 } from "@/src/lib/supabaseClient";
 import {
   deleteOemVehicleLink,
+  groupDuplicateVehicles,
+  resolveCompatibilityNoteVehicles,
   upsertOemVehicleLinks,
   type CatalogSuggestionMatch,
+  type GroupedVisualVehicle,
+  type ResolveCompatibilityNoteResult,
+  type ResolvedCompatibilityVehicle,
   type VerifiedVehicleMatch,
 } from "@/src/services/oemCompatibilityService";
 import {
@@ -108,7 +113,15 @@ export function OemVehicleLinkDrawer({
   const lastAppliedDrawerVinRef = useRef("");
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [removingVehicleId, setRemovingVehicleId] = useState<number | null>(null);
+  const [removingVehicleKey, setRemovingVehicleKey] = useState<string | null>(null);
+
+  // Auto-matching automatico dalla colonna "Compatibilità descrittiva (da CSV)"
+  const [csvAutoMatch, setCsvAutoMatch] =
+    useState<ResolveCompatibilityNoteResult | null>(null);
+  const [selectedCsvIds, setSelectedCsvIds] = useState<number[]>([]);
+  const [isResolvingCsv, setIsResolvingCsv] = useState(false);
+  const [isAutoLinkingCsv, setIsAutoLinkingCsv] = useState(false);
+  const appliedCsvPreselectKeyRef = useRef("");
 
   const parsedVin = useMemo(() => parseAndValidateVin(vinInput), [vinInput]);
   const vinMatchedBrand = useMemo(
@@ -127,6 +140,11 @@ export function OemVehicleLinkDrawer({
     setDraftVehicles(Array.isArray(pendingVehicles) ? pendingVehicles : []);
     setVinInput("");
     lastAppliedDrawerVinRef.current = "";
+    appliedCsvPreselectKeyRef.current = "";
+    setCsvAutoMatch(null);
+    setSelectedCsvIds([]);
+    setIsResolvingCsv(false);
+    setIsAutoLinkingCsv(false);
     setDrawerError(null);
     setSelectedBrand("");
     setSelectedModel("");
@@ -160,6 +178,69 @@ export function OemVehicleLinkDrawer({
       cancelled = true;
     };
   }, [open, normalizedCode, pendingVehicles, brands.length]);
+
+  // Auto-risoluzione automatica su `public.vehicles` partendo dalla Nota CSV descrittiva
+  useEffect(() => {
+    const noteText = typeof compatibilityNote === "string" ? compatibilityNote.trim() : "";
+    if (!open || !noteText) {
+      setCsvAutoMatch(null);
+      setSelectedCsvIds([]);
+      setIsResolvingCsv(false);
+      return;
+    }
+    if (loadingBrands) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    const sessionKey = `${normalizedCode}::${noteText}`;
+
+    setIsResolvingCsv(true);
+
+    resolveCompatibilityNoteVehicles(noteText, brands, {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (cancelled || controller.signal.aborted) return;
+        setCsvAutoMatch(result);
+
+        // Pre-seleziona al 100% (tutti già checked di default) tutti i veicoli trovati dalla Nota CSV
+        const allFoundIds = Array.isArray(result.vehicles)
+          ? result.vehicles.map((v) => v.vehicle_id)
+          : [];
+        setSelectedCsvIds(allFoundIds);
+
+        // Pre-seleziona automaticamente Marca (e Modello se univoco) nelle tendine
+        if (
+          appliedCsvPreselectKeyRef.current !== sessionKey &&
+          !lastAppliedDrawerVinRef.current &&
+          result.commonBrand
+        ) {
+          const targetUpper = result.commonBrand.toUpperCase();
+          const matchedBrandOption =
+            brands.find((b) => b.toUpperCase() === targetUpper) ?? result.commonBrand;
+          appliedCsvPreselectKeyRef.current = sessionKey;
+          setSelectedBrand(matchedBrandOption);
+          if (result.commonModel) {
+            setSelectedModel(result.commonModel);
+          }
+          setVersionSearch("");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCsvAutoMatch(null);
+          setSelectedCsvIds([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsResolvingCsv(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [open, normalizedCode, compatibilityNote, brands, loadingBrands]);
 
   // Preseleziona automaticamente la marca quando nel drawer viene inserito un VIN valido (17 caratteri)
   useEffect(() => {
@@ -261,6 +342,56 @@ export function OemVehicleLinkDrawer({
     [draftVehicles]
   );
 
+  const csvSuggestedVehicles = useMemo(
+    () => (Array.isArray(csvAutoMatch?.vehicles) ? csvAutoMatch.vehicles : []),
+    [csvAutoMatch]
+  );
+
+  const groupedCsvSuggestedVehicles = useMemo(
+    () => groupDuplicateVehicles(csvSuggestedVehicles),
+    [csvSuggestedVehicles]
+  );
+
+  const csvUnmatchedItems = useMemo(
+    () =>
+      Array.isArray(csvAutoMatch?.unmatchedItems)
+        ? csvAutoMatch.unmatchedItems
+        : [],
+    [csvAutoMatch]
+  );
+
+  const linkableCsvVehicles = useMemo(
+    () => csvSuggestedVehicles.filter((v) => !verifiedIdSet.has(v.vehicle_id)),
+    [csvSuggestedVehicles, verifiedIdSet]
+  );
+
+  const linkableCsvGroups = useMemo(
+    () =>
+      groupedCsvSuggestedVehicles.filter((g) =>
+        g.vehicleIds.some((id) => !verifiedIdSet.has(id))
+      ),
+    [groupedCsvSuggestedVehicles, verifiedIdSet]
+  );
+
+  const selectedCsvIdSet = useMemo(() => new Set(selectedCsvIds), [selectedCsvIds]);
+
+  const selectedLinkableCsvVehicles = useMemo(
+    () => linkableCsvVehicles.filter((v) => selectedCsvIdSet.has(v.vehicle_id)),
+    [linkableCsvVehicles, selectedCsvIdSet]
+  );
+
+  const selectedLinkableCsvGroups = useMemo(
+    () =>
+      linkableCsvGroups.filter((g) => {
+        const linkableIds = g.vehicleIds.filter((id) => !verifiedIdSet.has(id));
+        return (
+          linkableIds.length > 0 &&
+          linkableIds.every((id) => selectedCsvIdSet.has(id))
+        );
+      }),
+    [linkableCsvGroups, verifiedIdSet, selectedCsvIdSet]
+  );
+
   // Deduplica i suggerimenti marca/modello dal catalogo OEM (prioritizzando eventuale marca ricavata dal VIN)
   const uniqueSuggestions = useMemo(() => {
     const safeList = Array.isArray(catalogSuggestions) ? catalogSuggestions : [];
@@ -288,26 +419,57 @@ export function OemVehicleLinkDrawer({
   }, [catalogSuggestions, vinMatchedBrand]);
 
   // Se c'è un VIN valido con marca riconosciuta, evidenzia i veicoli verificati già compatibili per quella marca
+  const groupedVerifiedVehicles = useMemo(
+    () =>
+      groupDuplicateVehicles(
+        Array.isArray(verifiedVehicles) ? verifiedVehicles : []
+      ),
+    [verifiedVehicles]
+  );
+
+  const groupedDraftVehicles = useMemo(
+    () => groupDuplicateVehicles(draftVehicles),
+    [draftVehicles]
+  );
+
   const vinFilteredVerifiedCount = useMemo(() => {
-    if (!vinMatchedBrand || !Array.isArray(verifiedVehicles)) return 0;
+    if (!vinMatchedBrand) return 0;
     const targetUpper = vinMatchedBrand.toUpperCase();
-    return verifiedVehicles.filter((v) =>
+    return groupedVerifiedVehicles.filter((v) =>
       (v.marca || "").toUpperCase().includes(targetUpper)
     ).length;
-  }, [vinMatchedBrand, verifiedVehicles]);
+  }, [vinMatchedBrand, groupedVerifiedVehicles]);
 
-  const filteredVersions = useMemo(() => {
-    const q = versionSearch.trim().toLowerCase();
-    if (!q) return versions;
-    return versions.filter((v) => v.versione.toLowerCase().includes(q));
-  }, [versions, versionSearch]);
-
-  const selectableFilteredVersions = useMemo(() => {
-    return filteredVersions.filter((v) => {
+  const groupedAllVersions = useMemo(() => {
+    const mapped: SelectedVehicleDraft[] = [];
+    for (const v of versions) {
       const numId = Number(v.id);
-      return Number.isSafeInteger(numId) && numId > 0 && !verifiedIdSet.has(numId);
-    });
-  }, [filteredVersions, verifiedIdSet]);
+      if (!Number.isSafeInteger(numId) || numId <= 0) continue;
+      mapped.push({
+        vehicle_id: numId,
+        marca: selectedBrand,
+        modello: selectedModel,
+        versione: v.versione,
+      });
+    }
+    return groupDuplicateVehicles(mapped);
+  }, [versions, selectedBrand, selectedModel]);
+
+  const groupedFilteredVersions = useMemo(() => {
+    const q = versionSearch.trim().toLowerCase();
+    if (!q) return groupedAllVersions;
+    return groupedAllVersions.filter((g) =>
+      g.versione.toLowerCase().includes(q)
+    );
+  }, [groupedAllVersions, versionSearch]);
+
+  const selectableFilteredVersionGroups = useMemo(
+    () =>
+      groupedFilteredVersions.filter((g) =>
+        g.vehicleIds.some((id) => !verifiedIdSet.has(id))
+      ),
+    [groupedFilteredVersions, verifiedIdSet]
+  );
 
   const handleApplySuggestion = (sugg: { marca: string; modello: string }) => {
     const targetUpper = sugg.marca.toUpperCase();
@@ -350,51 +512,28 @@ export function OemVehicleLinkDrawer({
     }
   };
 
-  const toggleVersion = (versionOption: VehicleVersionOption) => {
-    const numId = Number(versionOption.id);
-    if (!Number.isSafeInteger(numId) || numId <= 0) return;
-    if (verifiedIdSet.has(numId)) return;
+  const toggleVersionGroup = (
+    group: GroupedVisualVehicle<SelectedVehicleDraft>
+  ) => {
+    const linkableIds = group.vehicleIds.filter((id) => !verifiedIdSet.has(id));
+    if (linkableIds.length === 0) return;
 
     setDraftVehicles((prev) => {
-      if (prev.some((v) => v.vehicle_id === numId)) {
-        return prev.filter((v) => v.vehicle_id !== numId);
+      const prevIds = new Set(prev.map((v) => v.vehicle_id));
+      const allSelected = linkableIds.every((id) => prevIds.has(id));
+      if (allSelected) {
+        const removeSet = new Set(linkableIds);
+        return prev.filter((v) => !removeSet.has(v.vehicle_id));
       }
-      return [
-        ...prev,
-        {
-          vehicle_id: numId,
-          marca: selectedBrand,
-          modello: selectedModel,
-          versione: versionOption.versione,
-        },
-      ];
-    });
-  };
 
-  const handleSelectAllFilteredVersions = () => {
-    if (selectableFilteredVersions.length === 0) return;
-
-    const allSelected = selectableFilteredVersions.every((v) =>
-      draftIdSet.has(Number(v.id))
-    );
-
-    if (allSelected) {
-      const removeSet = new Set(selectableFilteredVersions.map((v) => Number(v.id)));
-      setDraftVehicles((prev) => prev.filter((v) => !removeSet.has(v.vehicle_id)));
-      return;
-    }
-
-    setDraftVehicles((prev) => {
-      const existing = new Set(prev.map((v) => v.vehicle_id));
       const additions: SelectedVehicleDraft[] = [];
-      for (const v of selectableFilteredVersions) {
-        const numId = Number(v.id);
-        if (!existing.has(numId)) {
+      for (const id of linkableIds) {
+        if (!prevIds.has(id)) {
           additions.push({
-            vehicle_id: numId,
-            marca: selectedBrand,
-            modello: selectedModel,
-            versione: v.versione,
+            vehicle_id: id,
+            marca: group.marca,
+            modello: group.modello,
+            versione: group.versione,
           });
         }
       }
@@ -402,15 +541,51 @@ export function OemVehicleLinkDrawer({
     });
   };
 
-  const handleRemoveDraft = (vehicleId: number) => {
-    setDraftVehicles((prev) => prev.filter((v) => v.vehicle_id !== vehicleId));
+  const handleSelectAllFilteredVersions = () => {
+    if (selectableFilteredVersionGroups.length === 0) return;
+
+    const allLinkableItems: SelectedVehicleDraft[] = [];
+    for (const g of selectableFilteredVersionGroups) {
+      for (const id of g.vehicleIds) {
+        if (!verifiedIdSet.has(id)) {
+          allLinkableItems.push({
+            vehicle_id: id,
+            marca: g.marca,
+            modello: g.modello,
+            versione: g.versione,
+          });
+        }
+      }
+    }
+
+    const allSelected =
+      allLinkableItems.length > 0 &&
+      allLinkableItems.every((v) => draftIdSet.has(v.vehicle_id));
+
+    if (allSelected) {
+      const removeSet = new Set(allLinkableItems.map((v) => v.vehicle_id));
+      setDraftVehicles((prev) => prev.filter((v) => !removeSet.has(v.vehicle_id)));
+      return;
+    }
+
+    setDraftVehicles((prev) => {
+      const existing = new Set(prev.map((v) => v.vehicle_id));
+      const additions = allLinkableItems.filter((v) => !existing.has(v.vehicle_id));
+      return [...prev, ...additions];
+    });
+  };
+
+  const handleRemoveDraftGroup = (vehicleIds: number[]) => {
+    const removeSet = new Set(vehicleIds);
+    setDraftVehicles((prev) => prev.filter((v) => !removeSet.has(v.vehicle_id)));
   };
 
   const handleQueueOnly = () => {
     onQueueVehicles?.(normalizedCode, draftVehicles);
+    const uniqueCount = groupedDraftVehicles.length;
     toast.success(
-      draftVehicles.length > 0
-        ? `${draftVehicles.length} ${draftVehicles.length === 1 ? "veicolo messo" : "veicoli messi"} in coda per ${oemCode}.`
+      uniqueCount > 0
+        ? `${uniqueCount} ${uniqueCount === 1 ? "veicolo messo" : "veicoli messi"} in coda per ${oemCode}${draftVehicles.length > uniqueCount ? ` (${draftVehicles.length} ID collegati)` : ""}.`
         : `Coda azzerata per ${oemCode}.`
     );
     onOpenChange(false);
@@ -458,38 +633,151 @@ export function OemVehicleLinkDrawer({
       verified: true,
     }));
 
+    const uniqueCount = groupedDraftVehicles.length;
     onSavedVehicles(normalizedCode, newlyVerified);
     onQueueVehicles?.(normalizedCode, []);
     toast.success(
-      `Salvati ${res.savedCount} abbinamenti OEM ↔ Auto per ${oemCode}.`
+      `Salvati ${uniqueCount} ${uniqueCount === 1 ? "veicolo" : "veicoli"}${res.savedCount > uniqueCount ? ` (${res.savedCount} ID collegati)` : ""} per ${oemCode}.`
     );
     onOpenChange(false);
   };
 
-  const handleRemoveVerifiedVehicle = async (vehicle: VerifiedVehicleMatch) => {
-    setRemovingVehicleId(vehicle.vehicle_id);
+  const handleRemoveVerifiedVehicleGroup = async (
+    group: GroupedVisualVehicle<VerifiedVehicleMatch>
+  ) => {
+    setRemovingVehicleKey(group.key);
     setDrawerError(null);
 
-    const res = await deleteOemVehicleLink(oemCode, vehicle.vehicle_id);
-    setRemovingVehicleId(null);
+    let lastError: string | null = null;
+    let deletedAny = false;
 
-    if (res.error || !res.deleted) {
-      setDrawerError(
-        res.error || "Impossibile rimuovere il veicolo abbinato dal database."
-      );
+    for (const vid of group.vehicleIds) {
+      const res = await deleteOemVehicleLink(oemCode, vid);
+      if (res.error || !res.deleted) {
+        lastError =
+          res.error || "Impossibile rimuovere il veicolo abbinato dal database.";
+      } else {
+        deletedAny = true;
+        onRemovedVehicle?.(normalizedCode, vid);
+      }
+    }
+
+    setRemovingVehicleKey(null);
+
+    if (lastError && !deletedAny) {
+      setDrawerError(lastError);
       toast.error("Rimozione abbinamento non riuscita.");
       return;
     }
 
-    onRemovedVehicle?.(normalizedCode, vehicle.vehicle_id);
     toast.success(
-      `Rimosso abbinamento ${vehicle.marca} ${vehicle.modello} da ${oemCode}.`
+      `Rimosso abbinamento ${group.marca} ${group.modello} da ${oemCode}.`
     );
   };
 
+  const handleToggleCsvSuggestedGroup = (
+    group: GroupedVisualVehicle<ResolvedCompatibilityVehicle>
+  ) => {
+    const linkableIds = group.vehicleIds.filter((id) => !verifiedIdSet.has(id));
+    if (linkableIds.length === 0) return;
+
+    setSelectedCsvIds((prev) => {
+      const prevSet = new Set(prev);
+      const allSelected = linkableIds.every((id) => prevSet.has(id));
+      if (allSelected) {
+        const removeSet = new Set(linkableIds);
+        return prev.filter((id) => !removeSet.has(id));
+      }
+      const next = [...prev];
+      for (const id of linkableIds) {
+        if (!prevSet.has(id)) next.push(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleAllCsvSuggested = () => {
+    if (linkableCsvVehicles.length === 0) return;
+    const allChecked =
+      selectedLinkableCsvGroups.length === linkableCsvGroups.length;
+    if (allChecked) {
+      setSelectedCsvIds([]);
+    } else {
+      setSelectedCsvIds(linkableCsvVehicles.map((v) => v.vehicle_id));
+    }
+  };
+
+  const handleAutoLinkAllCsvSuggestions = async () => {
+    const vehiclesToSave =
+      selectedLinkableCsvVehicles.length > 0
+        ? selectedLinkableCsvVehicles
+        : linkableCsvVehicles;
+
+    if (vehiclesToSave.length === 0) {
+      toast.info("Tutti i veicoli suggeriti dalla Nota CSV risultano già abbinati.");
+      return;
+    }
+
+    setIsAutoLinkingCsv(true);
+    setDrawerError(null);
+
+    const combinedNotes = [
+      sku ? `SKU: ${sku}` : "",
+      compatibilityNote ? `Compatibilità CSV: ${compatibilityNote}` : "",
+      notes || partLabel || "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    const payload = vehiclesToSave.map((v) => ({
+      oem_code: oemCode,
+      vehicle_id: v.vehicle_id,
+      source: "csv_auto_match",
+      notes: combinedNotes || undefined,
+    }));
+
+    const res = await upsertOemVehicleLinks(payload);
+    setIsAutoLinkingCsv(false);
+
+    if (res.error) {
+      setDrawerError(res.error);
+      toast.error("Abbinamento automatico da Nota CSV non riuscito.");
+      return;
+    }
+
+    const newlyVerified: VerifiedVehicleMatch[] = vehiclesToSave.map((v) => ({
+      vehicle_id: v.vehicle_id,
+      marca: v.marca,
+      modello: v.modello,
+      versione: v.versione,
+      catalog_oem_code: oemCode,
+      verified: true,
+    }));
+
+    const savedIds = new Set(newlyVerified.map((v) => v.vehicle_id));
+    const savedUniqueCount = groupDuplicateVehicles(vehiclesToSave).length;
+    const remainingDrafts = draftVehicles.filter((v) => !savedIds.has(v.vehicle_id));
+    setDraftVehicles(remainingDrafts);
+    setSelectedCsvIds((prev) => prev.filter((id) => !savedIds.has(id)));
+    onSavedVehicles(normalizedCode, newlyVerified);
+    onQueueVehicles?.(normalizedCode, remainingDrafts);
+
+    toast.success(
+      `Abbinati automaticamente ${savedUniqueCount} ${savedUniqueCount === 1 ? "veicolo" : "veicoli"}${res.savedCount > savedUniqueCount ? ` (${res.savedCount} ID collegati)` : ""} da Nota CSV per ${oemCode}.`
+    );
+
+    if (csvUnmatchedItems.length === 0 && remainingDrafts.length === 0) {
+      onOpenChange(false);
+    }
+  };
+
   const allFilteredChecked =
-    selectableFilteredVersions.length > 0 &&
-    selectableFilteredVersions.every((v) => draftIdSet.has(Number(v.id)));
+    selectableFilteredVersionGroups.length > 0 &&
+    selectableFilteredVersionGroups.every((g) =>
+      g.vehicleIds
+        .filter((id) => !verifiedIdSet.has(id))
+        .every((id) => draftIdSet.has(id))
+    );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -543,6 +831,196 @@ export function OemVehicleLinkDrawer({
               </p>
             </div>
           )}
+
+          {/* Auto-matching automatico dalla Nota CSV su `public.vehicles` */}
+          {compatibilityNote &&
+            (isResolvingCsv ||
+              csvSuggestedVehicles.length > 0 ||
+              csvUnmatchedItems.length > 0) && (
+              <div className="rounded-xl border border-slate-200 bg-[#F9FAFB] p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 tabular-nums">
+                    {isResolvingCsv ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1E3A8A]" />
+                        <span>Ricerca automatica da Nota CSV...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5 text-[#1E3A8A]" />
+                        <span>
+                          Suggeriti da Nota CSV ({groupedCsvSuggestedVehicles.length}{" "}
+                          {groupedCsvSuggestedVehicles.length === 1
+                            ? "trovato"
+                            : "trovati"}
+                          )
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {!isResolvingCsv && linkableCsvGroups.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="success"
+                      size="sm"
+                      disabled={
+                        isAutoLinkingCsv ||
+                        isSaving ||
+                        selectedLinkableCsvVehicles.length === 0
+                      }
+                      onClick={() => void handleAutoLinkAllCsvSuggestions()}
+                      className="h-8 px-2.5 text-xs font-semibold tabular-nums"
+                    >
+                      {isAutoLinkingCsv ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Abbinamento...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Abbina tutti automaticamente (1-clic ·{" "}
+                          {selectedLinkableCsvGroups.length})
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+
+                {!isResolvingCsv && csvAutoMatch?.error && (
+                  <p className="mt-2 text-[11px] text-amber-700">
+                    {csvAutoMatch.error}
+                  </p>
+                )}
+
+                {!isResolvingCsv && groupedCsvSuggestedVehicles.length > 0 && (
+                  <>
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                      <span>
+                        {csvAutoMatch?.commonBrand && csvAutoMatch?.commonModel
+                          ? `Pre-selezionati automaticamente ${csvAutoMatch.commonBrand} · ${csvAutoMatch.commonModel} nei menu sottostanti.`
+                          : csvAutoMatch?.commonBrand
+                            ? `Marca ${csvAutoMatch.commonBrand} pre-selezionata · tutti i veicoli trovati sono già selezionati.`
+                            : "Tutti i veicoli rilevati su vehicles sono già selezionati e pronti al salvataggio."}
+                      </span>
+                      {linkableCsvGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={handleToggleAllCsvSuggested}
+                          className="shrink-0 font-medium text-[#1E3A8A] hover:underline cursor-pointer"
+                        >
+                          {selectedLinkableCsvGroups.length ===
+                          linkableCsvGroups.length
+                            ? "Deseleziona tutti"
+                            : `Seleziona tutti (${linkableCsvGroups.length})`}
+                        </button>
+                      )}
+                    </div>
+                    <ul className="mt-2.5 max-h-48 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                      {groupedCsvSuggestedVehicles.map((group) => {
+                        const linkableIds = group.vehicleIds.filter(
+                          (id) => !verifiedIdSet.has(id)
+                        );
+                        const isAlreadyVerified = linkableIds.length === 0;
+                        const isChecked =
+                          isAlreadyVerified ||
+                          linkableIds.every((id) => selectedCsvIdSet.has(id));
+                        const csvRowDomId = `csv-sugg-${group.primaryVehicleId}`;
+                        const hasMultipleIds = group.vehicleIds.length > 1;
+                        return (
+                          <li key={group.key}>
+                            <label
+                              htmlFor={csvRowDomId}
+                              className={`flex items-center justify-between gap-2.5 px-3 py-2 text-xs transition-colors ${
+                                isAlreadyVerified
+                                  ? "bg-slate-50/80 text-slate-500"
+                                  : "hover:bg-slate-50 cursor-pointer text-slate-800"
+                              }`}
+                            >
+                              <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                                <Checkbox
+                                  id={csvRowDomId}
+                                  checked={isChecked}
+                                  disabled={
+                                    isAlreadyVerified || isAutoLinkingCsv || isSaving
+                                  }
+                                  onCheckedChange={() =>
+                                    handleToggleCsvSuggestedGroup(group)
+                                  }
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">
+                                    <strong className="font-semibold text-slate-900">
+                                      {group.marca}
+                                    </strong>{" "}
+                                    {group.modello}
+                                  </span>
+                                  {group.versione && (
+                                    <span className="block truncate text-[11px] text-slate-500">
+                                      {group.versione}
+                                    </span>
+                                  )}
+                                </span>
+                              </span>
+                              <span className="flex shrink-0 items-center gap-2">
+                                {hasMultipleIds ? (
+                                  <span
+                                    title={`ID database collegati: ${group.vehicleIds.map((id) => `#${id}`).join(", ")}`}
+                                    className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-slate-600"
+                                  >
+                                    ×{group.vehicleIds.length} ID collegati
+                                  </span>
+                                ) : (
+                                  <span className="font-mono text-[11px] tabular-nums text-slate-400">
+                                    #{group.primaryVehicleId}
+                                  </span>
+                                )}
+                                {isAlreadyVerified && (
+                                  <span className="text-[11px] font-medium text-[#16A34A]">
+                                    Già abbinato
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                )}
+
+                {!isResolvingCsv && csvUnmatchedItems.length > 0 && (
+                  <div
+                    className={
+                      csvSuggestedVehicles.length > 0
+                        ? "mt-3 border-t border-slate-200/80 pt-2.5"
+                        : "mt-2"
+                    }
+                  >
+                    <p className="text-[11px] font-medium text-slate-600">
+                      Voci senza riscontro esatto su{" "}
+                      <span className="font-mono text-slate-700">vehicles</span>:
+                    </p>
+                    <ul className="mt-1.5 space-y-1.5">
+                      {csvUnmatchedItems.map((item, idx) => (
+                        <li
+                          key={`${item.raw}-${idx}`}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                        >
+                          <span className="min-w-0 truncate text-slate-700">
+                            {item.raw}
+                          </span>
+                          <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                            Da verificare a mano
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           {drawerError && (
             <div
               role="alert"
@@ -745,9 +1223,9 @@ export function OemVehicleLinkDrawer({
                   htmlFor="drawer-version-filter"
                   className="text-xs font-semibold text-slate-700"
                 >
-                  3. Versioni / Motorizzazioni ({versions.length})
+                  3. Versioni / Motorizzazioni ({groupedAllVersions.length})
                 </label>
-                {selectableFilteredVersions.length > 0 && (
+                {selectableFilteredVersionGroups.length > 0 && (
                   <button
                     type="button"
                     onClick={handleSelectAllFilteredVersions}
@@ -755,7 +1233,7 @@ export function OemVehicleLinkDrawer({
                   >
                     {allFilteredChecked
                       ? "Deseleziona visibili"
-                      : `Seleziona tutte (${selectableFilteredVersions.length})`}
+                      : `Seleziona tutte (${selectableFilteredVersionGroups.length})`}
                   </button>
                 )}
               </div>
@@ -784,20 +1262,25 @@ export function OemVehicleLinkDrawer({
                     <Loader2 className="h-4 w-4 animate-spin text-[#1E3A8A]" />
                     <span>Caricamento versioni...</span>
                   </div>
-                ) : filteredVersions.length === 0 ? (
+                ) : groupedFilteredVersions.length === 0 ? (
                   <p className="px-4 py-6 text-center text-xs text-slate-500">
                     Nessuna versione trovata con il filtro corrente.
                   </p>
                 ) : (
                   <ul className="divide-y divide-slate-100">
-                    {filteredVersions.map((ver) => {
-                      const numId = Number(ver.id);
-                      const isAlreadyVerified = verifiedIdSet.has(numId);
-                      const isChecked = isAlreadyVerified || draftIdSet.has(numId);
-                      const rowDomId = `ver-opt-${ver.id}`;
+                    {groupedFilteredVersions.map((group) => {
+                      const linkableIds = group.vehicleIds.filter(
+                        (id) => !verifiedIdSet.has(id)
+                      );
+                      const isAlreadyVerified = linkableIds.length === 0;
+                      const isChecked =
+                        isAlreadyVerified ||
+                        linkableIds.every((id) => draftIdSet.has(id));
+                      const rowDomId = `ver-opt-${group.primaryVehicleId}`;
+                      const hasMultipleIds = group.vehicleIds.length > 1;
 
                       return (
-                        <li key={ver.id}>
+                        <li key={group.key}>
                           <label
                             htmlFor={rowDomId}
                             className={`flex items-center justify-between gap-3 px-3.5 py-2.5 text-xs transition-colors ${
@@ -811,14 +1294,29 @@ export function OemVehicleLinkDrawer({
                                 id={rowDomId}
                                 checked={isChecked}
                                 disabled={isAlreadyVerified}
-                                onCheckedChange={() => toggleVersion(ver)}
+                                onCheckedChange={() => toggleVersionGroup(group)}
                               />
                               <span className="truncate font-medium">
-                                {ver.versione}
+                                {group.versione}
                               </span>
                             </span>
-                            <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">
-                              {isAlreadyVerified ? "Già abbinato" : `#${ver.id}`}
+                            <span className="flex shrink-0 items-center gap-2">
+                              {isAlreadyVerified ? (
+                                <span className="font-mono text-[11px] tabular-nums text-[#16A34A]">
+                                  Già abbinato
+                                </span>
+                              ) : hasMultipleIds ? (
+                                <span
+                                  title={`ID database collegati: ${group.vehicleIds.map((id) => `#${id}`).join(", ")}`}
+                                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-slate-600"
+                                >
+                                  ×{group.vehicleIds.length} ID collegati
+                                </span>
+                              ) : (
+                                <span className="font-mono text-[11px] tabular-nums text-slate-400">
+                                  #{group.primaryVehicleId}
+                                </span>
+                              )}
                             </span>
                           </label>
                         </li>
@@ -831,11 +1329,11 @@ export function OemVehicleLinkDrawer({
           </div>
 
           {/* Riepilogo nuovi veicoli selezionati pronti per il salvataggio */}
-          {draftVehicles.length > 0 && (
+          {groupedDraftVehicles.length > 0 && (
             <div className="rounded-xl border border-[#1E3A8A]/20 bg-[#1E3A8A]/[0.03] p-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-[#1E3A8A] tabular-nums">
-                  Nuovi veicoli da abbinare ({draftVehicles.length})
+                  Nuovi veicoli da abbinare ({groupedDraftVehicles.length})
                 </span>
                 <button
                   type="button"
@@ -846,24 +1344,34 @@ export function OemVehicleLinkDrawer({
                 </button>
               </div>
               <ul className="mt-2 max-h-36 space-y-1.5 overflow-y-auto">
-                {draftVehicles.map((item) => (
+                {groupedDraftVehicles.map((group) => (
                   <li
-                    key={item.vehicle_id}
+                    key={group.key}
                     className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
                   >
                     <span className="min-w-0 truncate text-slate-800">
-                      <strong className="font-semibold">{item.marca}</strong>{" "}
-                      {item.modello} ·{" "}
-                      <span className="text-slate-600">{item.versione}</span>
+                      <strong className="font-semibold">{group.marca}</strong>{" "}
+                      {group.modello} ·{" "}
+                      <span className="text-slate-600">{group.versione}</span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveDraft(item.vehicle_id)}
-                      aria-label={`Rimuovi ${item.marca} ${item.modello}`}
-                      className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {group.vehicleIds.length > 1 && (
+                        <span
+                          title={`ID database collegati: ${group.vehicleIds.map((id) => `#${id}`).join(", ")}`}
+                          className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-slate-600"
+                        >
+                          ×{group.vehicleIds.length} ID
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDraftGroup(group.vehicleIds)}
+                        aria-label={`Rimuovi ${group.marca} ${group.modello}`}
+                        className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -871,12 +1379,14 @@ export function OemVehicleLinkDrawer({
           )}
 
           {/* Veicoli già verificati e salvati su Supabase */}
-          {Array.isArray(verifiedVehicles) && verifiedVehicles.length > 0 && (
+          {groupedVerifiedVehicles.length > 0 && (
             <div className="border-t border-slate-200 pt-4">
               <div className="flex items-center justify-between gap-2 text-xs font-semibold text-[#16A34A] tabular-nums">
                 <span className="inline-flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span>Già salvati sul database ({verifiedVehicles.length})</span>
+                  <span>
+                    Già salvati sul database ({groupedVerifiedVehicles.length})
+                  </span>
                 </span>
                 {onRemovedVehicle && (
                   <span className="text-[11px] font-normal text-slate-400">
@@ -885,30 +1395,40 @@ export function OemVehicleLinkDrawer({
                 )}
               </div>
               <ul className="mt-2 max-h-40 divide-y divide-slate-100 overflow-y-auto text-xs text-slate-600">
-                {verifiedVehicles.map((v) => {
-                  const isRemovingThis = removingVehicleId === v.vehicle_id;
+                {groupedVerifiedVehicles.map((group) => {
+                  const isRemovingThis = removingVehicleKey === group.key;
+                  const hasMultipleIds = group.vehicleIds.length > 1;
                   return (
                     <li
-                      key={v.vehicle_id}
+                      key={group.key}
                       className="flex items-center justify-between gap-2 py-1.5"
                     >
                       <span className="min-w-0 truncate">
                         <strong className="font-medium text-slate-800">
-                          {v.marca}
+                          {group.marca}
                         </strong>{" "}
-                        {v.modello}
-                        {v.versione ? ` · ${v.versione}` : ""}
+                        {group.modello}
+                        {group.versione ? ` · ${group.versione}` : ""}
                       </span>
                       <div className="flex shrink-0 items-center gap-2">
-                        <span className="font-mono text-[11px] tabular-nums text-slate-400">
-                          #{v.vehicle_id}
-                        </span>
+                        {hasMultipleIds ? (
+                          <span
+                            title={`ID database collegati: ${group.vehicleIds.map((id) => `#${id}`).join(", ")}`}
+                            className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-slate-600"
+                          >
+                            ×{group.vehicleIds.length} ID collegati
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[11px] tabular-nums text-slate-400">
+                            #{group.primaryVehicleId}
+                          </span>
+                        )}
                         {onRemovedVehicle && (
                           <button
                             type="button"
                             disabled={isRemovingThis || isSaving}
-                            onClick={() => void handleRemoveVerifiedVehicle(v)}
-                            aria-label={`Rimuovi ${v.marca} ${v.modello}`}
+                            onClick={() => void handleRemoveVerifiedVehicleGroup(group)}
+                            aria-label={`Rimuovi ${group.marca} ${group.modello}`}
                             title="Rimuovi abbinamento da Supabase"
                             className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 cursor-pointer"
                           >
@@ -940,7 +1460,7 @@ export function OemVehicleLinkDrawer({
               className="h-9 bg-white text-xs font-medium text-slate-700"
             >
               <Plus className="h-3.5 w-3.5" />
-              Metti in coda batch ({draftVehicles.length})
+              Metti in coda batch ({groupedDraftVehicles.length})
             </Button>
           ) : (
             <Button
@@ -971,7 +1491,7 @@ export function OemVehicleLinkDrawer({
             ) : (
               <>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Salva subito su DB ({draftVehicles.length})
+                Salva subito su DB ({groupedDraftVehicles.length})
               </>
             )}
           </Button>

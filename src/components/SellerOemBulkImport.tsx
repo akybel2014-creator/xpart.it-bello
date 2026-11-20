@@ -320,11 +320,16 @@ export function SellerOemBulkImport() {
           )
         );
 
+        const savedIdSet = new Set(newlyVerified.map((v) => v.vehicle_id));
+        const remainingPending = row.pendingVehicles.filter(
+          (v) => !savedIdSet.has(v.vehicle_id)
+        );
+
         return {
           ...row,
           status: mergedVerified.length > 0 ? "abbinato" : row.status,
           verifiedVehicles: mergedVerified,
-          pendingVehicles: [],
+          pendingVehicles: remainingPending,
         };
       })
     );
@@ -904,12 +909,24 @@ export function SellerOemBulkImport() {
                           ) : null}
 
                           {row.compatibilityNote && (
-                            <p
-                              title={row.compatibilityNote}
-                              className="mt-1 max-w-md truncate text-[11px] text-slate-500"
-                            >
-                              Nota CSV: {row.compatibilityNote}
-                            </p>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <p
+                                title={row.compatibilityNote}
+                                className="max-w-md truncate text-[11px] text-slate-500"
+                              >
+                                Nota CSV: {row.compatibilityNote}
+                              </p>
+                              {row.verifiedVehicles.length === 0 && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => setDrawerCodeNorm(row.normalizedCode)}
+                                  className="text-[11px] font-medium text-[#1E3A8A] hover:underline disabled:opacity-50 cursor-pointer"
+                                >
+                                  Auto-abbina da CSV
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
 
