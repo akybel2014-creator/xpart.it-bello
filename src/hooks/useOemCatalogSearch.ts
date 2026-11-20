@@ -4,6 +4,11 @@ import {
   searchOemCatalog,
   type OemCatalogSearchItem,
 } from "@/src/services/oemCatalogService";
+import {
+  matchOemCodesBatch,
+  type MatchOemCodesBatchResponse,
+  type VerifiedVehicleMatch,
+} from "@/src/services/oemCompatibilityService";
 
 interface UseOemCatalogSearchParams {
   /** Testo inserito nel campo di ricerca OEM */
@@ -18,6 +23,7 @@ interface UseOemCatalogSearchParams {
 
 export interface UseOemCatalogSearchResult {
   results: OemCatalogSearchItem[];
+  verifiedVehicles: VerifiedVehicleMatch[];
   totalCount: number;
   normalizedQuery: string;
   isLoading: boolean;
@@ -30,12 +36,8 @@ export interface UseOemCatalogSearchResult {
 }
 
 /**
- * Hook React per la ricerca reattiva su `public.codici_oem_catalogo`.
- * Gestisce automaticamente:
- * - normalizzazione dell'input
- * - debounce durante la digitazione
- * - protezione da race condition (scarta eventuali risposte lente di query precedenti)
- * - riesecuzione automatica al cambio della Marca selezionata
+ * Hook React per la ricerca reattiva su `public.codici_oem_catalogo`
+ * arricchita con i veicoli compatibili verificati tramite `public.match_oem_codes_batch`.
  */
 export function useOemCatalogSearch({
   query,
@@ -44,6 +46,9 @@ export function useOemCatalogSearch({
   debounceMs = 350,
 }: UseOemCatalogSearchParams): UseOemCatalogSearchResult {
   const [results, setResults] = useState<OemCatalogSearchItem[]>([]);
+  const [verifiedVehicles, setVerifiedVehicles] = useState<VerifiedVehicleMatch[]>(
+    []
+  );
   const [totalCount, setTotalCount] = useState(0);
   const [normalizedQuery, setNormalizedQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -60,6 +65,7 @@ export function useOemCatalogSearch({
       if (normalized.length < 2) {
         requestIdRef.current += 1;
         setResults([]);
+        setVerifiedVehicles([]);
         setTotalCount(0);
         setNormalizedQuery(normalized);
         setHasSearched(false);
@@ -73,20 +79,44 @@ export function useOemCatalogSearch({
       setError(null);
       setNormalizedQuery(normalized);
 
-      const response = await searchOemCatalog({
-        rawQuery: rawInput,
-        carBrand: brandInput,
-      });
+      const emptyBatchFallback: MatchOemCodesBatchResponse = {
+        resultsByCode: {},
+        processedCount: 0,
+        aborted: false,
+        error: null,
+        errorCode: null,
+      };
+
+      const [catalogResponse, batchResponse] = await Promise.all([
+        searchOemCatalog({
+          rawQuery: rawInput,
+          carBrand: brandInput,
+        }),
+        matchOemCodesBatch([normalized], { chunkSize: 50 }).catch(
+          () => emptyBatchFallback
+        ),
+      ]);
 
       // Ignora la risposta se nel frattempo è partita una ricerca più recente
       if (currentRequestId !== requestIdRef.current) {
         return;
       }
 
-      setResults(response.data);
-      setTotalCount(response.totalCount);
-      setNormalizedQuery(response.normalizedQuery);
-      setError(response.error);
+      const rawVerified =
+        batchResponse.resultsByCode[normalized]?.verifiedVehicles ?? [];
+      const cleanBrand = brandInput?.trim().toLowerCase();
+      const filteredVerified =
+        cleanBrand && cleanBrand !== "all"
+          ? rawVerified.filter((v) =>
+              v.marca.toLowerCase().includes(cleanBrand)
+            )
+          : rawVerified;
+
+      setResults(Array.isArray(catalogResponse.data) ? catalogResponse.data : []);
+      setVerifiedVehicles(filteredVerified);
+      setTotalCount(catalogResponse.totalCount);
+      setNormalizedQuery(catalogResponse.normalizedQuery);
+      setError(catalogResponse.error);
       setHasSearched(true);
       setIsLoading(false);
     },
@@ -100,6 +130,7 @@ export function useOemCatalogSearch({
     if (!normalized) {
       requestIdRef.current += 1;
       setResults([]);
+      setVerifiedVehicles([]);
       setTotalCount(0);
       setNormalizedQuery("");
       setHasSearched(false);
@@ -134,6 +165,7 @@ export function useOemCatalogSearch({
   const clearResults = useCallback(() => {
     requestIdRef.current += 1;
     setResults([]);
+    setVerifiedVehicles([]);
     setTotalCount(0);
     setNormalizedQuery("");
     setHasSearched(false);
@@ -143,6 +175,7 @@ export function useOemCatalogSearch({
 
   return {
     results,
+    verifiedVehicles,
     totalCount,
     normalizedQuery,
     isLoading,

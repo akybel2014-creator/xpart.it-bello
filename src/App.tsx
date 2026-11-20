@@ -79,6 +79,7 @@ function AppShell() {
   const [activeTyreSearch, setActiveTyreSearch] = useState<TyreSearchPayload | null>(null);
   const [vehicleType, setVehicleType] = useState<VehicleType>("auto");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeVin, setActiveVin] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("all");
   const [selectedModel, setSelectedModel] = useState("all");
   const [selectedEngine, setSelectedEngine] = useState("all");
@@ -115,6 +116,7 @@ function AppShell() {
 
   const hasActiveTopSearch = Boolean(
     searchQuery.trim() ||
+      activeVin.trim() ||
       selectedBrand !== "all" ||
       selectedModel !== "all" ||
       selectedEngine !== "all" ||
@@ -174,28 +176,35 @@ function AppShell() {
       }
 
       if (selectedCategory) {
-        const catText = `${selectedCategory.slug} ${selectedCategory.nome} ${selectedCategory.macro_gruppo}`.toLowerCase();
+        const slugClean = (selectedCategory.slug || "").toLowerCase();
+        const catText = `${slugClean} ${selectedCategory.nome} ${selectedCategory.macro_gruppo}`.toLowerCase();
         const partText = `${part.category} ${part.subcategory} ${part.title} ${part.description}`.toLowerCase();
         const synonymMap: Record<string, string[]> = {
           freni: ["frenante", "pinza", "disco", "brembo"],
           motore: ["motore", "turbocompressore", "alternatore"],
+          "componenti-per-la-sovralimentazione": ["turbocompressore", "turbina", "intercooler", "sovralimentazione"],
+          "turbina-sovralimentazione": ["turbina", "turbocompressore", "turbo"],
           illuminazione: ["illuminazione", "faro", "proiettore", "led"],
-          cambio: ["trasmissione", "cambio", "dsg"],
+          cambio: ["trasmissione", "cambio", "dsg", "frizione"],
           ammortizzazione: ["sospensioni", "ammortizzatore", "macpherson"],
           sospensioni: ["sospensioni", "ammortizzatore"],
           sterzo: ["sospensioni", "sterzo", "scatola"],
           "impianto-elettrico": ["elettronica", "centralina", "alternatore", "ecu"],
-          "sensori-rele-unita-controllo": ["elettronica", "centralina", "ecu"],
+          "sensori-rele-unita-controllo": ["elettronica", "centralina", "ecu", "sensore"],
         };
-        const mappedTerms = synonymMap[selectedCategory.slug] ?? [];
-        const tokens = selectedCategory.nome
+        const mappedTerms = synonymMap[slugClean] ?? [];
+        const slugTokens = slugClean
+          .split("-")
+          .filter((t) => t.length >= 4 && !["della", "delle", "degli", "nell", "accessori"].includes(t));
+        const nameTokens = (selectedCategory.nome || "")
           .toLowerCase()
-          .split(/[\s,]+/)
+          .split(/[\s,/]+/)
           .filter((t) => t.length >= 4);
         const matchesCat =
-          partText.includes(selectedCategory.slug) ||
+          (slugClean && partText.includes(slugClean)) ||
           mappedTerms.some((term) => partText.includes(term)) ||
-          tokens.some((tok) => partText.includes(tok)) ||
+          slugTokens.some((tok) => partText.includes(tok)) ||
+          nameTokens.some((tok) => partText.includes(tok)) ||
           catText.includes(part.category.toLowerCase());
         if (!matchesCat) return false;
       }
@@ -302,6 +311,7 @@ function AppShell() {
   const applyVehicleSelection = (selection: VehicleSearchSelection) => {
     setVehicleType(selection.tipo_veicolo);
     setSearchQuery(selection.query);
+    setActiveVin(selection.vin || "");
     setSelectedBrand(selection.marca || "all");
     setSelectedModel(selection.modello || "all");
     setSelectedEngine(selection.motorizzazione || "all");
@@ -323,6 +333,7 @@ function AppShell() {
       applyVehicleSelection(selection);
     } else {
       setSearchQuery("");
+      setActiveVin("");
       setSelectedBrand("all");
       setSelectedModel("all");
       setSelectedEngine("all");
@@ -454,6 +465,8 @@ function AppShell() {
   const sharedOemResults = (
     <OemCatalogResults
       results={oemCatalogSearch.results}
+      verifiedVehicles={oemCatalogSearch.verifiedVehicles}
+      activeVin={activeVin}
       totalCount={oemCatalogSearch.totalCount}
       normalizedQuery={oemCatalogSearch.normalizedQuery}
       selectedBrand={selectedBrand}

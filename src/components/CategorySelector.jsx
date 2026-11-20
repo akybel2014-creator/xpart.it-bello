@@ -103,16 +103,16 @@ export function CategorySelector({
   const subSelectId = `${uniqueId}-sub`;
 
   // Stato delle categorie scaricate da Supabase
-  const [macroCategorie, setMacroCategorie] = useState(
-    () => categorieCache?.macro ?? []
+  const [macroCategorie, setMacroCategorie] = useState(() =>
+    Array.isArray(categorieCache?.macro) ? categorieCache.macro : []
   );
-  const [tutteSottocategorie, setTutteSottocategorie] = useState(
-    () => categorieCache?.sub ?? []
+  const [tutteSottocategorie, setTutteSottocategorie] = useState(() =>
+    Array.isArray(categorieCache?.sub) ? categorieCache.sub : []
   );
 
-  // Stato selezioni correnti
-  const [selectedMacroNome, setSelectedMacroNome] = useState("");
-  const [selectedSubId, setSelectedSubId] = useState("");
+  // Stato selezioni correnti (usa gli slug univoci con suffisso di `public.categorie_sito`)
+  const [selectedMacroSlug, setSelectedMacroSlug] = useState("");
+  const [selectedSubSlug, setSelectedSubSlug] = useState("");
   const skipNextNullSyncRef = useRef(false);
 
   // Stati UX: caricamento ed errore
@@ -120,16 +120,20 @@ export function CategorySelector({
   const [errorMessage, setErrorMessage] = useState(null);
 
   /**
-   * 1. Fetch iniziale:
-   *    - Carica le macro-categorie (livello = 1, attiva = true) ordinate alfabeticamente.
-   *    - Scarica in parallelo anche le sottocategorie attive (livello = 2) per rendere
-   *      istantaneo il filtro a cascata lato client senza latenza al cambio selezione.
+   * 1. Fetch iniziale da `public.categorie_sito`:
+   *    - Carica macro-categorie (livello = 1, attiva = true) ordinate alfabeticamente.
+   *    - Carica in parallelo le sottocategorie attive (livello = 2, attiva = true)
+   *      con slug univoco con suffisso per il filtro a cascata istantaneo.
    */
   const caricaCategorie = useCallback(
     async (forceRefresh = false) => {
       if (!forceRefresh && categorieCache && supabaseClient === defaultSupabase) {
-        setMacroCategorie(categorieCache.macro);
-        setTutteSottocategorie(categorieCache.sub);
+        setMacroCategorie(
+          Array.isArray(categorieCache.macro) ? categorieCache.macro : []
+        );
+        setTutteSottocategorie(
+          Array.isArray(categorieCache.sub) ? categorieCache.sub : []
+        );
         setLoading(false);
         return;
       }
@@ -166,16 +170,28 @@ export function CategorySelector({
         ]);
 
         if (macroRes.error) {
-          logSupabaseError("CategorySelector:macro(livello=1)", CATEGORIES_TABLE_NAME, macroRes.error);
+          logSupabaseError(
+            "CategorySelector:macro(livello=1)",
+            CATEGORIES_TABLE_NAME,
+            macroRes.error
+          );
           throw macroRes.error;
         }
         if (subRes.error) {
-          logSupabaseError("CategorySelector:sub(livello=2)", CATEGORIES_TABLE_NAME, subRes.error);
+          logSupabaseError(
+            "CategorySelector:sub(livello=2)",
+            CATEGORIES_TABLE_NAME,
+            subRes.error
+          );
           throw subRes.error;
         }
 
-        const macroData = macroRes.data ?? [];
-        const subData = subRes.data ?? [];
+        const macroData = Array.isArray(macroRes.data)
+          ? macroRes.data.filter((item) => item && item.slug && item.nome)
+          : [];
+        const subData = Array.isArray(subRes.data)
+          ? subRes.data.filter((item) => item && item.slug && item.nome)
+          : [];
 
         if (macroData.length === 0) {
           console.warn(
@@ -190,7 +206,11 @@ export function CategorySelector({
         setMacroCategorie(macroData);
         setTutteSottocategorie(subData);
       } catch (err) {
-        logSupabaseError("CategorySelector:caricaCategorie", CATEGORIES_TABLE_NAME, err);
+        logSupabaseError(
+          "CategorySelector:caricaCategorie",
+          CATEGORIES_TABLE_NAME,
+          err
+        );
         const messaggio =
           err instanceof Error
             ? err.message
@@ -207,73 +227,107 @@ export function CategorySelector({
     caricaCategorie(false);
   }, [caricaCategorie]);
 
-  // Sincronizza eventuale valore controllato esterno (es. Reset o Modifica ricambio)
+  // Sincronizza eventuale valore controllato esterno privilegiando gli slug univoci con suffisso
   useEffect(() => {
     if (!value) {
       if (skipNextNullSyncRef.current) {
         skipNextNullSyncRef.current = false;
         return;
       }
-      setSelectedMacroNome("");
-      setSelectedSubId("");
+      setSelectedMacroSlug("");
+      setSelectedSubSlug("");
       return;
     }
 
     skipNextNullSyncRef.current = false;
 
+    const safeMacro = Array.isArray(macroCategorie) ? macroCategorie : [];
+    const safeSub = Array.isArray(tutteSottocategorie) ? tutteSottocategorie : [];
+
+    // 1. Tenta il match diretto per slug univoco (o id) tra le sottocategorie di livello 2
+    const matchedSub = safeSub.find(
+      (s) =>
+        (value.slug && s.slug === value.slug) ||
+        (value.id && s.id === value.id)
+    );
+    if (matchedSub) {
+      const targetMacroNorm = normalizzaTestoCategoria(matchedSub.macro_gruppo);
+      const parentMacro = safeMacro.find(
+        (m) => normalizzaTestoCategoria(m.nome) === targetMacroNorm
+      );
+      setSelectedMacroSlug(parentMacro ? parentMacro.slug : "");
+      setSelectedSubSlug(matchedSub.slug);
+      return;
+    }
+
+    // 2. Tenta il match diretto per slug univoco (o id / nome) tra le macro-categorie di livello 1
+    const matchedMacro = safeMacro.find(
+      (m) =>
+        (value.slug && m.slug === value.slug) ||
+        (value.id && m.id === value.id) ||
+        (value.nome &&
+          normalizzaTestoCategoria(m.nome) === normalizzaTestoCategoria(value.nome))
+    );
+    if (matchedMacro) {
+      setSelectedMacroSlug(matchedMacro.slug);
+      setSelectedSubSlug(variant === "filter" ? "" : matchedMacro.slug);
+      return;
+    }
+
+    // 3. Fallback sul macro_gruppo se passato esternamente senza slug ancora risolto
     if (value.macro_gruppo && value.macro_gruppo !== "Principale") {
-      // Cerca la macro-categoria padre corrispondente anche in presenza di punteggiatura diversa
       const targetNorm = normalizzaTestoCategoria(value.macro_gruppo);
-      const matchMacro = macroCategorie.find(
+      const parentMacro = safeMacro.find(
         (m) => normalizzaTestoCategoria(m.nome) === targetNorm
       );
-      setSelectedMacroNome(matchMacro ? matchMacro.nome : value.macro_gruppo);
-      setSelectedSubId(value.id || "");
-    } else if (value.nome) {
-      setSelectedMacroNome(value.nome);
-      // In modalità filtro, la scelta della sola macro mantiene la sottocategoria su "Tutte"
-      setSelectedSubId(variant === "filter" ? "" : value.id || "");
+      if (parentMacro) {
+        setSelectedMacroSlug(parentMacro.slug);
+      }
+      setSelectedSubSlug(value.slug || "");
     }
-  }, [value, macroCategorie, variant]);
+  }, [value, macroCategorie, tutteSottocategorie, variant]);
 
-  // Macro-categoria attualmente selezionata
-  const macroSelezionata = useMemo(
-    () => macroCategorie.find((m) => m.nome === selectedMacroNome) || null,
-    [macroCategorie, selectedMacroNome]
-  );
+  // Macro-categoria attualmente selezionata (risolta per slug univoco)
+  const macroSelezionata = useMemo(() => {
+    const safeMacro = Array.isArray(macroCategorie) ? macroCategorie : [];
+    return safeMacro.find((m) => m.slug === selectedMacroSlug) || null;
+  }, [macroCategorie, selectedMacroSlug]);
 
   // 2. Comportamento a cascata:
   //    Filtra localmente le sottocategorie di livello = 2 con `macro_gruppo`
   //    corrispondente al nome della macro-categoria scelta.
   const sottocategorieFiltrate = useMemo(() => {
-    if (!selectedMacroNome) return [];
-    const targetNorm = normalizzaTestoCategoria(selectedMacroNome);
-    return tutteSottocategorie.filter(
+    if (!macroSelezionata) return [];
+    const safeSub = Array.isArray(tutteSottocategorie) ? tutteSottocategorie : [];
+    const targetNorm = normalizzaTestoCategoria(macroSelezionata.nome);
+    return safeSub.filter(
       (sub) => normalizzaTestoCategoria(sub.macro_gruppo) === targetNorm
     );
-  }, [selectedMacroNome, tutteSottocategorie]);
+  }, [macroSelezionata, tutteSottocategorie]);
 
   // Handler cambio Macro-categoria (Livello 1)
   const handleMacroChange = (e) => {
-    const nextMacroNome = e.target.value;
-    setSelectedMacroNome(nextMacroNome);
-    setSelectedSubId("");
+    const nextMacroSlug = e.target.value;
+    setSelectedMacroSlug(nextMacroSlug);
+    setSelectedSubSlug("");
 
-    if (!nextMacroNome) {
+    if (!nextMacroSlug) {
       onCategorySelect?.(null);
       return;
     }
 
     // In modalità filtro barra di ricerca notifica subito la macro-categoria selezionata;
-    // nel form di inserimento ricambio attende la selezione della sottocategoria.
+    // nel form di inserimento attende la selezione della sottocategoria.
     if (variant === "filter") {
-      const macroObj = macroCategorie.find((m) => m.nome === nextMacroNome);
+      const safeMacro = Array.isArray(macroCategorie) ? macroCategorie : [];
+      const macroObj = safeMacro.find((m) => m.slug === nextMacroSlug);
       if (macroObj) {
         onCategorySelect?.({
           id: macroObj.id,
           nome: macroObj.nome,
           slug: macroObj.slug,
           macro_gruppo: macroObj.macro_gruppo,
+          livello: 1,
         });
       }
     } else {
@@ -282,18 +336,19 @@ export function CategorySelector({
     }
   };
 
-  // Handler cambio Sottocategoria (Livello 2)
+  // Handler cambio Sottocategoria (Livello 2 tramite slug univoco con suffisso)
   const handleSubChange = (e) => {
-    const nextId = e.target.value;
-    setSelectedSubId(nextId);
+    const nextSlug = e.target.value;
+    setSelectedSubSlug(nextSlug);
 
-    if (!nextId) {
+    if (!nextSlug) {
       if (variant === "filter" && macroSelezionata) {
         onCategorySelect?.({
           id: macroSelezionata.id,
           nome: macroSelezionata.nome,
           slug: macroSelezionata.slug,
           macro_gruppo: macroSelezionata.macro_gruppo,
+          livello: 1,
         });
       } else {
         skipNextNullSyncRef.current = true;
@@ -304,23 +359,25 @@ export function CategorySelector({
 
     // Se la macro-categoria non ha sottocategorie di livello 2, consente comunque
     // di confermare la macro-categoria stessa come categoria finale
-    if (macroSelezionata && nextId === macroSelezionata.id) {
+    if (macroSelezionata && nextSlug === macroSelezionata.slug) {
       onCategorySelect?.({
         id: macroSelezionata.id,
         nome: macroSelezionata.nome,
         slug: macroSelezionata.slug,
         macro_gruppo: macroSelezionata.macro_gruppo,
+        livello: 1,
       });
       return;
     }
 
-    const subObj = sottocategorieFiltrate.find((s) => s.id === nextId);
+    const subObj = sottocategorieFiltrate.find((s) => s.slug === nextSlug);
     if (subObj) {
       onCategorySelect?.({
         id: subObj.id,
         nome: subObj.nome,
         slug: subObj.slug,
         macro_gruppo: subObj.macro_gruppo,
+        livello: 2,
       });
     }
   };
@@ -369,10 +426,11 @@ export function CategorySelector({
 
   const isFilter = variant === "filter";
   const selectHeight = "h-10";
+  const safeMacroList = Array.isArray(macroCategorie) ? macroCategorie : [];
 
   return (
     <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${className}`}>
-      {/* Primo selettore: Macro-categorie (livello = 1) */}
+      {/* Primo selettore: Macro-categorie (livello = 1) identificate da slug univoco */}
       <div>
         {!isFilter && (
           <label
@@ -386,15 +444,15 @@ export function CategorySelector({
           <select
             id={macroSelectId}
             aria-label="Macro-categoria"
-            value={selectedMacroNome}
+            value={selectedMacroSlug}
             onChange={handleMacroChange}
             className={`${selectHeight} w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3.5 pr-9 text-sm text-slate-900 transition-colors duration-150 hover:border-slate-300 focus:border-[#1E3A8A] focus:outline-none focus:ring-2 focus:ring-[#1E3A8A]/25 cursor-pointer`}
           >
             <option value="">
               {isFilter ? "Tutte le macro-categorie" : "Seleziona macro-categoria..."}
             </option>
-            {macroCategorie.map((macro) => (
-              <option key={macro.id} value={macro.nome}>
+            {safeMacroList.map((macro) => (
+              <option key={macro.slug} value={macro.slug}>
                 {macro.nome}
               </option>
             ))}
@@ -403,7 +461,7 @@ export function CategorySelector({
         </div>
       </div>
 
-      {/* Secondo selettore: Sottocategorie (livello = 2) */}
+      {/* Secondo selettore: Sottocategorie (livello = 2) con slug univoco con suffisso */}
       <div>
         {!isFilter && (
           <label
@@ -417,13 +475,13 @@ export function CategorySelector({
           <select
             id={subSelectId}
             aria-label="Sottocategoria"
-            value={selectedSubId}
-            disabled={!selectedMacroNome}
+            value={selectedSubSlug}
+            disabled={!selectedMacroSlug}
             onChange={handleSubChange}
             className={`${selectHeight} w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3.5 pr-9 text-sm text-slate-900 transition-colors duration-150 hover:border-slate-300 focus:border-[#1E3A8A] focus:outline-none focus:ring-2 focus:ring-[#1E3A8A]/25 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 cursor-pointer`}
           >
             <option value="">
-              {!selectedMacroNome
+              {!selectedMacroSlug
                 ? "Sottocategoria (scegli macro)"
                 : sottocategorieFiltrate.length > 0
                   ? isFilter
@@ -433,16 +491,16 @@ export function CategorySelector({
             </option>
 
             {sottocategorieFiltrate.map((sub) => (
-              <option key={sub.id} value={sub.id}>
+              <option key={sub.slug} value={sub.slug}>
                 {sub.nome}
               </option>
             ))}
 
             {/* Fallback pulito se la macro-categoria non ha ancora sottocategorie in tabella */}
-            {selectedMacroNome &&
+            {selectedMacroSlug &&
               sottocategorieFiltrate.length === 0 &&
               macroSelezionata && (
-                <option value={macroSelezionata.id}>
+                <option value={macroSelezionata.slug}>
                   {macroSelezionata.nome} (Categoria principale)
                 </option>
               )}

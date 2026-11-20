@@ -20,6 +20,12 @@ import {
   supabase as defaultSupabase,
 } from "@/src/lib/supabaseClient";
 import { normalizeOemCode } from "@/src/services/oemCatalogService";
+import {
+  normalizeVinInput,
+  parseAndValidateVin,
+  resolveBrandFromWmi,
+  VIN_LENGTH,
+} from "@/src/services/vinService";
 
 /**
  * Configurazione dei 3 tab veicolo.
@@ -204,11 +210,13 @@ export function VehicleSearchBox({
   // Stato principale della ricerca
   const [tipoVeicolo, setTipoVeicolo] = useState(initialTipoVeicolo);
   const [internalQuery, setInternalQuery] = useState(controlledQuery ?? "");
+  const [vinValue, setVinValue] = useState("");
   const [marca, setMarca] = useState("");
   const [modello, setModello] = useState("");
   const [veicoloId, setVeicoloId] = useState("");
   const [motorizzazione, setMotorizzazione] = useState("");
   const [selectedCategoriaObj, setSelectedCategoriaObj] = useState(null);
+  const lastAutoAppliedVinRef = useRef("");
 
   // Opzioni caricate da Supabase (`public.veicoli_sito` / fallback `public.vehicles`)
   const [marche, setMarche] = useState([]);
@@ -220,6 +228,16 @@ export function VehicleSearchBox({
   const [loadingModelli, setLoadingModelli] = useState(false);
   const [loadingMotorizzazioni, setLoadingMotorizzazioni] = useState(false);
   const [searchingParts, setSearchingParts] = useState(false);
+
+  // Validazione e scomposizione VIN (WMI / VDS / VIS) lato client
+  const parsedVin = useMemo(() => parseAndValidateVin(vinValue), [vinValue]);
+  const vinMatchedBrand = useMemo(
+    () =>
+      parsedVin.isValid
+        ? resolveBrandFromWmi(parsedVin.mappedBrand, marche)
+        : null,
+    [parsedVin.isValid, parsedVin.mappedBrand, marche]
+  );
 
   // Sincronizza l'input testo se il componente padre modifica `query` dall'esterno
   // (es. click su un cross-reference OEM o pulsante Chiudi risultati OEM)
@@ -248,6 +266,10 @@ export function VehicleSearchBox({
         overrides.categoriaObj !== undefined
           ? overrides.categoriaObj
           : selectedCategoriaObj;
+      const nextVin =
+        overrides.vin !== undefined ? overrides.vin : parsedVin.normalized;
+      const nextVinInfo =
+        overrides.vin !== undefined ? parseAndValidateVin(overrides.vin) : parsedVin;
 
       return {
         tipo_veicolo: overrides.tipo_veicolo ?? tipoVeicolo,
@@ -260,12 +282,23 @@ export function VehicleSearchBox({
         veicolo_id:
           overrides.veicolo_id !== undefined ? overrides.veicolo_id : veicoloId,
         query: overrides.query !== undefined ? overrides.query : queryValue,
+        vin: nextVinInfo.isValid ? nextVin : "",
+        vin_wmi: nextVinInfo.isValid ? nextVinInfo.wmi : "",
         categoria_id: catObj ? catObj.id : "",
         categoria_slug: catObj ? catObj.slug ?? "" : "",
         categoria_nome: catObj ? catObj.nome ?? "" : "",
       };
     },
-    [tipoVeicolo, marca, modello, motorizzazione, veicoloId, queryValue, selectedCategoriaObj]
+    [
+      tipoVeicolo,
+      marca,
+      modello,
+      motorizzazione,
+      veicoloId,
+      queryValue,
+      selectedCategoriaObj,
+      parsedVin,
+    ]
   );
 
   const notifyParentChange = useCallback(
@@ -274,6 +307,33 @@ export function VehicleSearchBox({
     },
     [buildPayload]
   );
+
+  // Preselezione automatica della Marca quando il VIN valido (17 caratteri) viene riconosciuto su `public.vehicles_marche` / `public.vehicles`
+  useEffect(() => {
+    if (!parsedVin.isValid) {
+      lastAutoAppliedVinRef.current = "";
+      return;
+    }
+    if (!vinMatchedBrand) return;
+    if (lastAutoAppliedVinRef.current === parsedVin.normalized) return;
+
+    lastAutoAppliedVinRef.current = parsedVin.normalized;
+    if (marca !== vinMatchedBrand) {
+      setMarca(vinMatchedBrand);
+      setModello("");
+      setMotorizzazione("");
+      setVeicoloId("");
+      notifyParentChange({
+        marca: vinMatchedBrand,
+        modello: "",
+        motorizzazione: "",
+        veicolo_id: "",
+        vin: parsedVin.normalized,
+      });
+    } else {
+      notifyParentChange({ vin: parsedVin.normalized });
+    }
+  }, [parsedVin.isValid, parsedVin.normalized, vinMatchedBrand, marca, notifyParentChange]);
 
   // ---------------------------------------------------------------------------
   // 1. FETCH MARCHE DISTINTE (`public.vehicles_marche` -> `public.vehicles` per Auto,
@@ -629,10 +689,12 @@ export function VehicleSearchBox({
   // HANDLER INTERAZIONI UTENTE
   // ---------------------------------------------------------------------------
 
-  // Cambio tab: azzera i 3 selettori a cascata + categoria e ricarica le marche del nuovo tipo_veicolo
+  // Cambio tab: azzera i 3 selettori a cascata + categoria + VIN e ricarica le marche del nuovo tipo_veicolo
   const handleSelectTab = (nextTipo) => {
     if (nextTipo === tipoVeicolo) return;
     setTipoVeicolo(nextTipo);
+    setVinValue("");
+    lastAutoAppliedVinRef.current = "";
     setMarca("");
     setModello("");
     setMotorizzazione("");
@@ -641,12 +703,46 @@ export function VehicleSearchBox({
 
     notifyParentChange({
       tipo_veicolo: nextTipo,
+      vin: "",
       marca: "",
       modello: "",
       motorizzazione: "",
       veicolo_id: "",
       categoriaObj: null,
     });
+  };
+
+  const handleVinChange = (rawNext) => {
+    const cleaned = normalizeVinInput(rawNext);
+    setVinValue(cleaned);
+    const info = parseAndValidateVin(cleaned);
+
+    if (!info.isValid) {
+      lastAutoAppliedVinRef.current = "";
+      notifyParentChange({ vin: "" });
+      return;
+    }
+
+    const matched = resolveBrandFromWmi(info.mappedBrand, marche);
+    if (matched) {
+      lastAutoAppliedVinRef.current = info.normalized;
+      if (marca !== matched) {
+        setMarca(matched);
+        setModello("");
+        setMotorizzazione("");
+        setVeicoloId("");
+        notifyParentChange({
+          vin: info.normalized,
+          marca: matched,
+          modello: "",
+          motorizzazione: "",
+          veicolo_id: "",
+        });
+        return;
+      }
+    }
+
+    notifyParentChange({ vin: info.normalized });
   };
 
   const handleQueryInputChange = (nextValue) => {
@@ -714,6 +810,8 @@ export function VehicleSearchBox({
     if (controlledQuery === undefined) {
       setInternalQuery("");
     }
+    setVinValue("");
+    lastAutoAppliedVinRef.current = "";
     setMarca("");
     setModello("");
     setMotorizzazione("");
@@ -727,6 +825,8 @@ export function VehicleSearchBox({
       motorizzazione: "",
       veicolo_id: "",
       query: "",
+      vin: "",
+      vin_wmi: "",
       categoria_id: "",
       categoria_slug: "",
       categoria_nome: "",
@@ -758,7 +858,12 @@ export function VehicleSearchBox({
   };
 
   const hasAnyFilter = Boolean(
-    queryValue.trim() || marca || modello || veicoloId || selectedCategoriaObj?.id
+    queryValue.trim() ||
+      vinValue.trim() ||
+      marca ||
+      modello ||
+      veicoloId ||
+      selectedCategoriaObj?.id
   );
   const normalizedOem = normalizeOemCode(queryValue);
 
@@ -955,19 +1060,77 @@ export function VehicleSearchBox({
           </div>
         </div>
 
-        {/* Seconda riga compatta: Selettore Categorie a 2 livelli (`public.categorie_sito`) + Pulsanti CTA e Reset */}
+        {/* Seconda riga compatta: VIN (telaio 17 caratteri) + Selettore Categorie a 2 livelli + Pulsanti CTA e Reset */}
         <div className="mt-3 flex flex-col gap-3 border-t border-slate-200/80 pt-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <span className="shrink-0 text-xs font-semibold text-slate-500">
-              Categoria:
-            </span>
-            <CategorySelector
-              variant="filter"
-              value={selectedCategoriaObj}
-              onCategorySelect={handleCategorySelect}
-              supabaseClient={supabaseClient}
-              className="flex-1 lg:max-w-2xl"
-            />
+          <div className="flex flex-1 flex-col gap-3 xl:flex-row xl:items-center">
+            {/* Input Ricerca / Filtro per VIN (telaio 17 caratteri) coerente con gli altri campi */}
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2 xl:w-[290px] xl:shrink-0">
+              <label
+                htmlFor="vsb-vin"
+                className="shrink-0 text-xs font-semibold text-slate-500"
+              >
+                VIN / Telaio:
+              </label>
+              <div className="relative flex-1">
+                <input
+                  id="vsb-vin"
+                  type="text"
+                  value={vinValue}
+                  maxLength={VIN_LENGTH}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => handleVinChange(e.target.value)}
+                  placeholder="Numero telaio (17 car.)"
+                  aria-label="Ricerca o filtro per VIN telaio a 17 caratteri"
+                  aria-invalid={parsedVin.status === "invalid_chars"}
+                  className={`h-10 w-full rounded-lg border bg-white pl-3 pr-14 font-mono text-xs uppercase tracking-wide text-slate-900 placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 transition-colors hover:border-slate-300 focus:outline-none focus:ring-2 ${
+                    parsedVin.status === "invalid_chars"
+                      ? "border-red-300 focus:border-red-500 focus:ring-red-500/20"
+                      : parsedVin.isValid
+                        ? "border-[#16A34A]/50 focus:border-[#1E3A8A] focus:ring-[#1E3A8A]/25"
+                        : "border-slate-200 focus:border-[#1E3A8A] focus:ring-[#1E3A8A]/25"
+                  }`}
+                />
+                <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                  {parsedVin.length > 0 && (
+                    <span
+                      className={`font-mono text-[10px] tabular-nums ${
+                        parsedVin.status === "invalid_chars"
+                          ? "text-red-600 font-semibold"
+                          : parsedVin.isValid
+                            ? "text-[#16A34A] font-semibold"
+                            : "text-slate-400"
+                      }`}
+                    >
+                      {parsedVin.length}/{VIN_LENGTH}
+                    </span>
+                  )}
+                  {vinValue !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => handleVinChange("")}
+                      aria-label="Svuota campo VIN"
+                      className="flex h-5 w-5 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2.5">
+              <span className="shrink-0 text-xs font-semibold text-slate-500">
+                Categoria:
+              </span>
+              <CategorySelector
+                variant="filter"
+                value={selectedCategoriaObj}
+                onCategorySelect={handleCategorySelect}
+                supabaseClient={supabaseClient}
+                className="flex-1"
+              />
+            </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -997,9 +1160,81 @@ export function VehicleSearchBox({
           </div>
         </div>
 
+        {/* Micro-copy discreto di validazione e scomposizione VIN (WMI / VDS / VIS) */}
+        {parsedVin.status !== "empty" && (
+          <div
+            aria-live="polite"
+            className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs"
+          >
+            {parsedVin.status === "invalid_chars" ? (
+              <span className="font-medium text-red-600">{parsedVin.message}</span>
+            ) : parsedVin.status === "incomplete" ? (
+              <>
+                <span className="text-amber-700 tabular-nums">
+                  {parsedVin.message}
+                </span>
+                {parsedVin.wmi.length === 3 && (
+                  <>
+                    <span aria-hidden="true" className="text-slate-300">
+                      ·
+                    </span>
+                    <span className="text-slate-500">
+                      WMI{" "}
+                      <strong className="font-mono font-semibold text-slate-700">
+                        {parsedVin.wmi}
+                      </strong>
+                      {parsedVin.mappedBrand ? ` (${parsedVin.mappedBrand})` : ""}
+                    </span>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-[#16A34A]">VIN valido</span>
+                <span aria-hidden="true" className="text-slate-300">
+                  ·
+                </span>
+                <span className="text-slate-600">
+                  WMI{" "}
+                  <strong className="font-mono font-semibold text-[#1E3A8A]">
+                    {parsedVin.wmi}
+                  </strong>
+                  <span aria-hidden="true" className="mx-1.5 text-slate-300">
+                    /
+                  </span>
+                  VDS{" "}
+                  <strong className="font-mono font-semibold text-slate-800">
+                    {parsedVin.vds}
+                  </strong>
+                  <span aria-hidden="true" className="mx-1.5 text-slate-300">
+                    /
+                  </span>
+                  VIS{" "}
+                  <strong className="font-mono font-semibold text-slate-800">
+                    {parsedVin.vis}
+                  </strong>
+                </span>
+                {vinMatchedBrand && (
+                  <>
+                    <span aria-hidden="true" className="text-slate-300">
+                      ·
+                    </span>
+                    <span className="text-slate-600">
+                      Marca preselezionata:{" "}
+                      <strong className="font-semibold text-slate-900">
+                        {vinMatchedBrand}
+                      </strong>
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {/* Anteprima compatta della normalizzazione OEM quando l'utente digita un codice */}
         {normalizedOem.length >= 2 && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span>Ricerca catalogo OEM normalizzata:</span>
             <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono font-semibold text-[#1E3A8A]">
               {normalizedOem}

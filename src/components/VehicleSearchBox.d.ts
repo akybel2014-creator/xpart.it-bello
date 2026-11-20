@@ -9,6 +9,8 @@ export interface VehicleSearchSelection {
   motorizzazione: string;
   veicolo_id: string;
   query: string;
+  vin?: string;
+  vin_wmi?: string;
   categoria_id: string;
   categoria_slug: string;
   categoria_nome: string;

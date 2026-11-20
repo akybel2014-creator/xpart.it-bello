@@ -15,6 +15,7 @@ import {
   TooltipTrigger,
 } from "@/src/components/ui/tooltip";
 import type { AutoPart } from "@/src/data/parts";
+import { buildSitePartSku } from "@/src/services/oemCompatibilityService";
 
 interface ProductCardProps {
   part: AutoPart;
@@ -30,6 +31,11 @@ export function ProductCard({
   onInspectPart,
 }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
+  const partSku = buildSitePartSku({
+    category: part.category,
+    oemCode: part.oemCode,
+    fallbackId: part.id,
+  });
 
   return (
     <Card className="group flex h-full flex-col overflow-hidden border-slate-200/90 bg-white transition-all duration-200 ease-in-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
@@ -61,13 +67,17 @@ export function ProductCard({
       {/* Technical Details */}
       <CardContent className="flex flex-1 flex-col p-5">
         {/* Clean Unboxed Kicker Metadata */}
-        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500">
           <span className="font-medium text-slate-700">
             {part.brand} {part.model}
           </span>
           <span aria-hidden="true">·</span>
           <span className="font-mono text-[11px] text-slate-500">
             OEM {part.oemCode}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono text-[11px] text-slate-400">
+            SKU {partSku}
           </span>
         </div>
 

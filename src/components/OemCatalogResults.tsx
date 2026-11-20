@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Check,
+  CheckCircle2,
   Copy,
   Database,
   Loader2,
@@ -21,6 +22,11 @@ import {
   type OemCatalogSearchItem,
   type OemMatchType,
 } from "@/src/services/oemCatalogService";
+import {
+  buildSitePartSku,
+  type VerifiedVehicleMatch,
+} from "@/src/services/oemCompatibilityService";
+import { parseAndValidateVin } from "@/src/services/vinService";
 
 export interface GroupedOemCatalogCard {
   /** Chiave univoca del gruppo (oem_code normalizzato + marca + modello) */
@@ -47,6 +53,8 @@ export interface GroupedOemCatalogCard {
 
 interface OemCatalogResultsProps {
   results: OemCatalogSearchItem[];
+  verifiedVehicles?: VerifiedVehicleMatch[];
+  activeVin?: string;
   totalCount: number;
   normalizedQuery: string;
   selectedBrand: string;
@@ -231,6 +239,8 @@ export function groupOemCatalogResults(
  */
 export function OemCatalogResults({
   results,
+  verifiedVehicles = [],
+  activeVin = "",
   totalCount,
   normalizedQuery,
   selectedBrand,
@@ -247,9 +257,19 @@ export function OemCatalogResults({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const isBrandFiltered = Boolean(selectedBrand && selectedBrand !== "all");
+  const parsedActiveVin = useMemo(
+    () => parseAndValidateVin(activeVin),
+    [activeVin]
+  );
+  const safeVerifiedVehicles = Array.isArray(verifiedVehicles)
+    ? verifiedVehicles
+    : [];
 
   // Deduplica e accorpa le righe con stesso codice OEM + Marca + Modello
-  const groupedCards = useMemo(() => groupOemCatalogResults(results), [results]);
+  const groupedCards = useMemo(
+    () => groupOemCatalogResults(Array.isArray(results) ? results : []),
+    [results]
+  );
 
   // Non renderizza il pannello finché non c'è una ricerca attiva
   if (!normalizedQuery || (!isLoading && !hasSearched && !error)) {
@@ -372,7 +392,7 @@ export function OemCatalogResults({
                   Riprova
                 </Button>
               </div>
-            ) : uniqueCount === 0 ? (
+            ) : uniqueCount === 0 && safeVerifiedVehicles.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-[#F9FAFB] px-6 py-9 text-center">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400">
                   <SearchX className="h-5 w-5" />
@@ -413,13 +433,37 @@ export function OemCatalogResults({
                         {selectedBrand}
                       </span>
                     )}
+                    {parsedActiveVin.isValid && (
+                      <span className="text-xs text-slate-500">
+                        <span aria-hidden="true" className="mr-1.5 text-slate-300">
+                          ·
+                        </span>
+                        VIN{" "}
+                        <strong className="font-mono font-semibold text-slate-800">
+                          {parsedActiveVin.wmi} {parsedActiveVin.vds} {parsedActiveVin.vis}
+                        </strong>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 tabular-nums">
                     <span className="font-semibold text-slate-900">
                       {uniqueCount}{" "}
-                      {uniqueCount === 1 ? "risultato trovato" : "risultati trovati"}
+                      {uniqueCount === 1 ? "scheda catalogo" : "schede catalogo"}
                     </span>
+                    {safeVerifiedVehicles.length > 0 && (
+                      <>
+                        <span aria-hidden="true" className="text-slate-300">
+                          ·
+                        </span>
+                        <span className="font-semibold text-[#16A34A]">
+                          {safeVerifiedVehicles.length}{" "}
+                          {safeVerifiedVehicles.length === 1
+                            ? "veicolo verificato"
+                            : "veicoli verificati"}
+                        </span>
+                      </>
+                    )}
                     {(hasMergedDuplicates || totalCount > results.length) && (
                       <span className="text-slate-400">
                         ({totalCount > results.length ? `${totalCount} record in catalogo` : `accorpati da ${results.length} riferimenti`})
@@ -428,10 +472,55 @@ export function OemCatalogResults({
                   </div>
                 </div>
 
+                {/* Blocco Veicoli Compatibili Verificati (da `public.oem_vehicle_compatibility` + `public.vehicles`) */}
+                {safeVerifiedVehicles.length > 0 && (
+                  <div className="mb-4 rounded-xl border border-[#16A34A]/25 bg-[#16A34A]/[0.04] px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#15803D]">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Compatibilità verificate sul parco auto ({safeVerifiedVehicles.length})
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Abbinamenti confermati su motorizzazioni specifiche
+                      </span>
+                    </div>
+                    <ul className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs text-slate-700 md:grid-cols-2">
+                      {safeVerifiedVehicles.slice(0, 8).map((veh) => (
+                        <li
+                          key={veh.vehicle_id}
+                          className="flex items-center justify-between gap-2 border-b border-slate-200/60 py-1 last:border-b-0"
+                        >
+                          <span className="truncate">
+                            <strong className="font-semibold text-slate-900">
+                              {veh.marca}
+                            </strong>{" "}
+                            {veh.modello}
+                            {veh.versione ? ` · ${veh.versione}` : ""}
+                          </span>
+                          <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">
+                            #{veh.vehicle_id}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {safeVerifiedVehicles.length > 8 && (
+                      <p className="mt-1.5 text-[11px] text-slate-500 tabular-nums">
+                        +{safeVerifiedVehicles.length - 8} altre motorizzazioni verificate
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Griglia a 2 colonne delle card deduplicate */}
+                {uniqueCount > 0 && (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  {groupedCards.map((card) => {
+                  {groupedCards.map((card, cardIdx) => {
                     const matchMeta = MATCH_BADGE_MAP[card.matchType];
+                    const cardSku = buildSitePartSku({
+                      category: card.carBrand || "OEM",
+                      oemCode: card.oemCode,
+                      fallbackId: cardIdx + 1,
+                    });
 
                     // Costruisce dinamicamente solo i metadati realmente valorizzati (zero buchi visivi)
                     const vehicleMetaItems: { label: string; value: string; emphasis?: boolean }[] = [];
@@ -468,7 +557,7 @@ export function OemCatalogResults({
                         className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 transition-colors duration-150 hover:border-[#1E3A8A]/40"
                       >
                         <div>
-                          {/* Riga superiore: Codice OEM + Copia + Badge match */}
+                          {/* Riga superiore: Codice OEM + SKU + Copia + Badge match */}
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <span className="block text-[11px] font-medium uppercase tracking-wider text-slate-400">
@@ -499,6 +588,9 @@ export function OemCatalogResults({
                                   </button>
                                 )}
                               </div>
+                              <p className="mt-0.5 font-mono text-[11px] text-slate-400">
+                                SKU {cardSku}
+                              </p>
                             </div>
 
                             <div className="flex flex-col items-end gap-1">
@@ -627,6 +719,7 @@ export function OemCatalogResults({
                     );
                   })}
                 </div>
+                )}
               </>
             )}
           </div>

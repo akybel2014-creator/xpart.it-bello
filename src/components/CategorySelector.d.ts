@@ -5,6 +5,7 @@ export interface CategoriaSito {
   nome: string;
   slug: string;
   macro_gruppo: string;
+  livello?: number;
 }
 
 export interface CategorySelectorProps {

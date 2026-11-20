@@ -2,6 +2,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Edit3,
+  FileSpreadsheet,
   MessageCircle,
   MoreHorizontal,
   Package,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { SellerOemBulkImport } from "@/src/components/SellerOemBulkImport";
 import {
   SellerPartModal,
   type SellerPartFormValues,
@@ -47,7 +49,7 @@ import {
 } from "@/src/data/sellerData";
 import { cn } from "@/src/lib/utils";
 
-type DashboardTab = "ricambi" | "preventivi";
+type DashboardTab = "ricambi" | "preventivi" | "importa-oem";
 
 const QUOTE_STATUS_OPTIONS: PreventivoStato[] = [
   "Nuovo",
@@ -243,16 +245,28 @@ export function SellerDashboard() {
           </div>
         </div>
 
-        <Button
-          type="button"
-          variant="success"
-          size="lg"
-          onClick={openCreateModal}
-          className="shrink-0 font-semibold"
-        >
-          <Plus className="h-4 w-4 stroke-[2.5]" />
-          Aggiungi ricambio
-        </Button>
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            onClick={() => setActiveTab("importa-oem")}
+            className="shrink-0 bg-white font-semibold text-[#1E3A8A] border-[#1E3A8A]/25 hover:bg-[#1E3A8A]/5"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Importa CSV / OEM
+          </Button>
+          <Button
+            type="button"
+            variant="success"
+            size="lg"
+            onClick={openCreateModal}
+            className="shrink-0 font-semibold"
+          >
+            <Plus className="h-4 w-4 stroke-[2.5]" />
+            Aggiungi ricambio
+          </Button>
+        </div>
       </div>
 
       {/* 2. Tre KPI Cards Riassuntive */}
@@ -380,65 +394,82 @@ export function SellerDashboard() {
                 ({preventivi.length})
               </span>
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "importa-oem"}
+              onClick={() => setActiveTab("importa-oem")}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition-all duration-150 whitespace-nowrap cursor-pointer",
+                activeTab === "importa-oem"
+                  ? "bg-white text-[#1E3A8A] shadow-xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              )}
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              <span>Importa CSV / Abbinamenti OEM</span>
+            </button>
           </div>
 
-          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-            <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={
-                  activeTab === "ricambi"
-                    ? "Filtra per titolo, OEM o marca..."
-                    : "Cerca cliente, officina o ricambio..."
-                }
-                aria-label="Cerca nella tabella"
-                className="h-9 pl-9 text-xs"
-              />
+          {activeTab !== "importa-oem" && (
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={
+                    activeTab === "ricambi"
+                      ? "Filtra per titolo, OEM o marca..."
+                      : "Cerca cliente, officina o ricambio..."
+                  }
+                  aria-label="Cerca nella tabella"
+                  className="h-9 pl-9 text-xs"
+                />
+              </div>
+
+              {activeTab === "ricambi" ? (
+                <div className="w-full sm:w-40">
+                  <Select
+                    value={partStatusFilter}
+                    onValueChange={(v) =>
+                      setPartStatusFilter(v as "Tutti" | RicambioStato)
+                    }
+                  >
+                    <SelectTrigger className="h-9 text-xs" aria-label="Filtra stato ricambio">
+                      <SelectValue placeholder="Stato" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Tutti">Tutti gli stati</SelectItem>
+                      <SelectItem value="Disponibile">Disponibile</SelectItem>
+                      <SelectItem value="Venduto">Venduto</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="w-full sm:w-44">
+                  <Select
+                    value={quoteStatusFilter}
+                    onValueChange={(v) =>
+                      setQuoteStatusFilter(v as "Tutti" | PreventivoStato)
+                    }
+                  >
+                    <SelectTrigger className="h-9 text-xs" aria-label="Filtra stato preventivo">
+                      <SelectValue placeholder="Stato preventivo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Tutti">Tutti gli stati</SelectItem>
+                      {QUOTE_STATUS_OPTIONS.map((st) => (
+                        <SelectItem key={st} value={st}>
+                          {st}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
-
-            {activeTab === "ricambi" ? (
-              <div className="w-full sm:w-40">
-                <Select
-                  value={partStatusFilter}
-                  onValueChange={(v) =>
-                    setPartStatusFilter(v as "Tutti" | RicambioStato)
-                  }
-                >
-                  <SelectTrigger className="h-9 text-xs" aria-label="Filtra stato ricambio">
-                    <SelectValue placeholder="Stato" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Tutti">Tutti gli stati</SelectItem>
-                    <SelectItem value="Disponibile">Disponibile</SelectItem>
-                    <SelectItem value="Venduto">Venduto</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="w-full sm:w-44">
-                <Select
-                  value={quoteStatusFilter}
-                  onValueChange={(v) =>
-                    setQuoteStatusFilter(v as "Tutti" | PreventivoStato)
-                  }
-                >
-                  <SelectTrigger className="h-9 text-xs" aria-label="Filtra stato preventivo">
-                    <SelectValue placeholder="Stato preventivo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Tutti">Tutti gli stati</SelectItem>
-                    {QUOTE_STATUS_OPTIONS.map((st) => (
-                      <SelectItem key={st} value={st}>
-                        {st}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
         {/* TAB 1: I Miei Ricambi */}
@@ -744,6 +775,9 @@ export function SellerDashboard() {
             )}
           </div>
         )}
+
+        {/* TAB 3: Importa CSV / Abbinamenti OEM ↔ Auto (Perimetro Sito) */}
+        {activeTab === "importa-oem" && <SellerOemBulkImport />}
       </div>
 
       {/* 4. Modale a comparsa Crea / Modifica Ricambio */}

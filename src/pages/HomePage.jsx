@@ -42,13 +42,42 @@ const FALLBACK_MACRO_CATEGORIE = [
 function getCategoryIcon(slug = "", nome = "") {
   const key = `${slug} ${nome}`.toLowerCase();
   if (key.includes("fren") || key.includes("disc")) return Disc;
-  if (key.includes("motor") || key.includes("turbo") || key.includes("alimentaz")) return Cog;
-  if (key.includes("illumin") || key.includes("far") || key.includes("ottic")) return Lightbulb;
-  if (key.includes("elettr") || key.includes("sensor") || key.includes("centralin")) return Zap;
-  if (key.includes("sospens") || key.includes("ammort") || key.includes("sterz")) return Compass;
-  if (key.includes("cambio") || key.includes("trasmiss")) return Gauge;
-  if (key.includes("carroz") || key.includes("portier") || key.includes("paraurt")) return Car;
-  if (key.includes("pneumat") || key.includes("cerch")) return Layers;
+  if (
+    key.includes("motor") ||
+    key.includes("turbo") ||
+    key.includes("sovraliment") ||
+    key.includes("alimentaz") ||
+    key.includes("carburant")
+  )
+    return Cog;
+  if (key.includes("illumin") || key.includes("far") || key.includes("ottic"))
+    return Lightbulb;
+  if (
+    key.includes("elettr") ||
+    key.includes("sensor") ||
+    key.includes("centralin") ||
+    key.includes("accension")
+  )
+    return Zap;
+  if (key.includes("sospens") || key.includes("ammort") || key.includes("sterz"))
+    return Compass;
+  if (
+    key.includes("cambio") ||
+    key.includes("trasmiss") ||
+    key.includes("frizion") ||
+    key.includes("scaric")
+  )
+    return Gauge;
+  if (key.includes("carroz") || key.includes("portier") || key.includes("paraurt"))
+    return Car;
+  if (
+    key.includes("pneumat") ||
+    key.includes("cerch") ||
+    key.includes("climat") ||
+    key.includes("riscald") ||
+    key.includes("raffredd")
+  )
+    return Layers;
   return Wrench;
 }
 
@@ -159,7 +188,7 @@ export function HomePage({
           .eq("livello", 1)
           .eq("attiva", true)
           .order("nome", { ascending: true })
-          .limit(8);
+          .limit(12);
 
         if (error) {
           logSupabaseError("HomePage:macroCategories", CATEGORIES_TABLE_NAME, error);
@@ -167,8 +196,12 @@ export function HomePage({
           return;
         }
 
-        if (Array.isArray(data) && data.length > 0) {
-          if (!cancelled) setMacroCategories(data);
+        const validCategories = Array.isArray(data)
+          ? data.filter((cat) => cat && cat.slug && cat.nome)
+          : [];
+
+        if (validCategories.length > 0) {
+          if (!cancelled) setMacroCategories(validCategories);
           return;
         }
 
@@ -299,7 +332,7 @@ export function HomePage({
               const Icon = getCategoryIcon(cat.slug, cat.nome);
               return (
                 <button
-                  key={cat.id}
+                  key={cat.slug || cat.id}
                   type="button"
                   onClick={() => onSelectCategoryCard?.(cat)}
                   className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-xs transition-all duration-150 hover:border-[#1E3A8A]/45 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]/40 cursor-pointer"
