@@ -85,20 +85,22 @@ export function Header({
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-8 px-4 sm:px-6 lg:px-8">
-        {/* Zone 1: Brand Wordmark */}
+        {/* Zone 1: Brand Logo */}
         <a
           href="#ricerca-avanzata"
           onClick={(e) => {
             e.preventDefault();
             navigateMarketplaceSection("ricerca-avanzata");
           }}
-          className="flex items-center gap-2.5 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]/40 rounded-md"
+          aria-label="xpart.it - Torna alla ricerca"
+          className="flex items-center shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]/40 rounded-md"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1E3A8A] text-white font-display text-sm font-bold tracking-tight">
-            CL
-          </span>
-          <span className="font-display text-lg font-bold tracking-tight text-slate-900">
-            CasaLavoro<span className="text-[#1E3A8A]">PRO</span>
+          <span className="flex h-12 w-[144px] items-center justify-center overflow-hidden">
+            <img
+              src="/assets/aistudio/image_e9862f9d.png"
+              alt="xpart.it"
+              className="w-[200px] max-w-none h-auto shrink-0 mix-blend-multiply"
+            />
           </span>
         </a>
 
